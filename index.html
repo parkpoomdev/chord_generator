@@ -1,0 +1,1405 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>24-Fret Fretboard Chord Suggester</title>
+    <!-- Load Tailwind CSS --><script src="https://cdn.tailwindcss.com"></script>
+    <!-- Configure Tailwind for custom colors and font --><script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary-dark': '#1e293b',
+                        'secondary-light': '#cbd5e1',
+                        'fret-wood-dark': '#4a2c0f', /* Deeper wood color */
+                        'fret-wood-light': '#654321', /* Original, fallback */
+                        'inlay': '#ffd700', /* Brighter gold for inlays */
+                        'suggest-1': '#ef4444', // Red
+                        'suggest-2': '#3b82f6', // Blue
+                        'suggest-3': '#10b981', // Green
+                        'suggest-4': '#f97316', // Orange
+                    },
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        /* Custom CSS for Fretboard Look (Simple/Modern Redesign) */
+        #fretboard-grid {
+            /* FIX 1: Set overflow to hidden to eliminate ALL scrollbars */
+            overflow: hidden; 
+            max-width: 100%;
+            height: 320px; /* ลดลง 20% จาก 400px */
+        }
+
+        .fretboard-container {
+            width: 100%; /* FIX 2: Make container fluid */
+            height: 100%; 
+            /* Simple Design: Light background, minimalist shadow */
+            background-color: #f3f4f6; /* Gray-100 for a clean look */
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.06); /* Soft, flat shadow */
+            position: relative;
+            border-radius: 8px; 
+        }
+        
+        /* New Nut Line Style (Fret 0) */
+        .nut-line {
+            width: 8px; /* Thicker than fret line (2px) */
+            background-color: #222; /* Darker color */
+            box-shadow: 0 0 5px rgba(0, 0, 0, 0.5);
+            z-index: 15;
+            position: absolute;
+            left: -4px; /* Centered at x=0 */
+            height: 100%; 
+            top: 0;
+            border-radius: 4px;
+        }
+
+        .fret-line {
+            /* Simple Design: Thinner, lighter color, no shadow */
+            width: 2px;
+            background-color: #9ca3af; /* Gray-400 */
+            box-shadow: none;
+            z-index: 10;
+            position: absolute;
+            height: 100%;
+            top: 0;
+        }
+
+        .string-line {
+            /* Simple Design: Thinner, darker for high contrast */
+            height: 1px;
+            background-color: #1f2937; /* Gray-800 */
+            z-index: 20;
+            cursor: pointer;
+        }
+
+        .note-dot {
+            width: 15.36px; /* ลดลงอีก 20% จาก 19.2px */
+            height: 15.36px; /* ลดลงอีก 20% จาก 19.2px */
+            cursor: pointer;
+            border-radius: 9999px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: transform 0.1s ease, opacity 0.3s ease, background-color 0.3s ease;
+            position: absolute; 
+            z-index: 30;
+            /* Simple Design: Remove heavy shadow */
+            box-shadow: none; 
+            /* Simple Design: Default dot color - visible but subtle */
+            background-color: #d1d5db; /* Gray-300 */
+            ring-color: #d1d5db;
+            opacity: 1; /* Always visible and subtle by default */
+            
+            /* FIX 1: Vertical Centering */
+            transform: translateY(-50%); 
+        }
+
+        .note-dot:hover {
+            transform: scale(1.1) translateY(-50%); /* Apply translateY to maintain center */
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.2); /* Soft, subtle hover shadow */
+        }
+        
+        .note-dot.is-selected {
+            background-color: #6366f1; /* Tailwind indigo-500 */
+            ring-color: #6366f1;
+            opacity: 1; 
+        }
+
+        /* Fret Inlays (Dots) */
+        .fret-inlay {
+            position: absolute;
+            /* Simple Design: Darker, flat color, no glow */
+            width: 14.4px; /* ลดลง 20% จาก 18px */
+            height: 14.4px; 
+            border-radius: 9999px;
+            background-color: #4b5563; /* Gray-600 */
+            opacity: 1; 
+            box-shadow: none;
+            z-index: 5;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        /* Styles for fret numbers and string labels */
+        .fret-number-label {
+            position: absolute; 
+            top: calc(100% + 5px); 
+            text-align: center; 
+            font-size: 0.875rem; 
+            font-weight: 500; 
+            color: #4b5563; 
+            width: 40px; 
+            transform: translateX(-50%); 
+        }
+
+        .string-label {
+            position: absolute;
+            right: calc(100% + 15px); 
+            font-weight: 600; 
+            font-size: 1.125rem; 
+            color: #1f2937; /* Gray-800 for high contrast */
+            width: 32px; 
+            text-align: right;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+
+        /* New Simple Table Styles */
+        .simple-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.95rem;
+        }
+        .simple-table th, .simple-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid #e5e7eb; /* Gray-200 */
+            text-align: left;
+        }
+        .simple-table th {
+            background-color: #f9fafb; /* Gray-50 */
+            font-weight: 600;
+            color: #1f2937; /* Gray-800 */
+        }
+        .suggestion-row:hover {
+            background-color: #eff6ff; /* Blue-50 on hover */
+            cursor: pointer;
+        }
+        .action-button {
+            background-color: #4f46e5; /* Indigo-600 */
+            color: white;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background-color 0.2s;
+        }
+        .action-button:hover {
+            background-color: #4338ca; /* Indigo-700 */
+        }
+        .remove-button {
+            background-color: #ef4444; /* Red-500 */
+            color: white;
+            padding: 4px 8px;
+            border-radius: 6px;
+            font-weight: 600;
+            transition: background-color 0.2s;
+        }
+        .remove-button:hover {
+            background-color: #dc2626; /* Red-600 */
+        }
+        /* Ensure mini fretboard SVGs are properly sized */
+        .mini-fretboard-cell {
+            width: 80px;
+            text-align: center;
+        }
+        
+        /* CARD AND DND STYLES REINTRODUCED */
+        .chord-card {
+            /* Minimalist Card Style for Progression */
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06);
+            transition: all 0.3s ease;
+            position: relative;
+            width: 150px; /* Fixed width for card */
+            text-align: center;
+            color: white; /* Ensure text is visible on colored background */
+            cursor: grab; /* Indicates draggable */
+        }
+        .chord-card:hover {
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
+        }
+        .chord-card.dragging {
+            opacity: 0.4;
+            border: 2px dashed #6366f1; /* Indigo */
+        }
+    </style>
+</head>
+<body class="bg-gray-100 font-sans min-h-screen p-4 md:p-8">
+
+    <div id="app-container" class="w-full max-w-none space-y-8">
+        <header class="text-center pb-4 border-b border-gray-300">
+            <h1 class="text-4xl font-extrabold text-primary-dark tracking-tight">Fretboard 24 เฟรต & เครื่องมือสร้างคอร์ด</h1>
+            <p class="text-gray-600 mt-2">จิ้ม 3 โน้ตขึ้นไปบนคอกีตาร์เพื่อดูคำแนะนำคอร์ดและสร้างลำดับคอร์ด</p>
+        </header>
+
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        <!-- 1. Fretboard Display Area --><div id="fretboard-section" class="bg-white p-4 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-primary-dark">Fretboard (E Standard)</h2>
+            <div id="fretboard-grid" class="relative">
+                <div id="fretboard-container" class="fretboard-container px-6 py-11 relative">
+                    <!-- Fret lines, Inlays, and Strings will be generated by JS --></div>
+            </div>
+            
+            <div class="mt-4 flex flex-col md:flex-row justify-between items-center bg-gray-50 p-3 rounded-lg">
+                <div id="current-selection" class="text-lg font-medium text-gray-700 mb-2 md:mb-0">
+                    โน้ตที่เลือก: <span id="selected-notes-display" class="font-bold text-indigo-600">--</span>
+                </div>
+                <button id="clear-button" class="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg shadow transition duration-150">
+                    ล้างโน้ตทั้งหมด
+                </button>
+            </div>
+
+            <!-- Suggestions inside Fretboard card -->
+            <div id="suggestions-section" class="mt-6">
+                <h2 class="text-2xl font-semibold mb-3 text-primary-dark">คำแนะนำคอร์ด: <span id="suggested-chord-name" class="text-teal-600">--</span></h2>
+                <div id="suggested-voicings-container" class="overflow-x-auto">
+                    <p id="suggestion-placeholder" class="text-gray-500 italic p-4">เลือก 3 โน้ตขึ้นไปบน Fretboard เพื่อดูคำแนะนำ</p>
+                    <!-- Suggested chord table will be inserted here -->
+                </div>
+            </div>
+
+            <!-- Progression inside Fretboard card -->
+            <div id="progression-section" class="mt-6">
+                <h2 class="text-2xl font-semibold mb-3 text-primary-dark">ลำดับคอร์ด (Chord Progression) (สูงสุด 7 คอร์ด)</h2>
+                <div id="progression-container" class="flex flex-wrap gap-4 p-4 border-2 border-dashed border-gray-300 rounded-xl items-start min-h-[100px]">
+                    <p id="progression-placeholder" class="text-gray-500 italic w-full text-center">เพิ่มคอร์ดที่แนะนำมาที่นี่เพื่อสร้างลำดับคอร์ด</p>
+                    <!-- Chord Cards will be dynamically inserted here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Segment Composer moved to the right of Fretboard -->
+        <!-- Segment Composer: Drag/Drop + Playback -->
+        <section id="segment-composer" class="bg-white p-4 rounded-xl shadow-lg">
+            <h2 class="text-2xl font-semibold mb-4 text-primary-dark">ตัวเรียบเรียง Segment & Playback</h2>
+
+            <!-- Transport / Meter Controls -->
+            <div class="flex flex-wrap items-end gap-4 mb-4">
+                <div>
+                    <label for="seg-bpm" class="block text-sm font-medium text-gray-700">Tempo (BPM)</label>
+                    <input id="seg-bpm" type="number" min="30" max="240" value="100" class="mt-1 w-28 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700">Time Signature</label>
+                    <div class="mt-1 flex items-center gap-2">
+                        <select id="seg-time-num" class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option>4</option>
+                            <option>3</option>
+                            <option>2</option>
+                            <option>6</option>
+                        </select>
+                        <span class="text-gray-500">/</span>
+                        <select id="seg-time-den" class="rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500">
+                            <option>4</option>
+                            <option>8</option>
+                        </select>
+                    </div>
+                </div>
+                <label class="inline-flex items-center gap-2 select-none">
+                    <input id="seg-metronome" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                    <span class="text-sm text-gray-700">Metronome</span>
+                </label>
+                <div class="ml-auto flex items-center gap-2">
+                    <button id="seg-play" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg">Preview</button>
+                    <button id="seg-stop" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg">Stop</button>
+                </div>
+            </div>
+
+            <!-- Chord Palette -->
+            <div class="mb-4">
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-lg font-semibold text-primary-dark">Chord Palette</h3>
+                    <div class="flex items-center gap-2">
+                        <input id="seg-custom-chord" placeholder="พิมพ์คอร์ด เช่น Cmaj7, Am" class="w-56 rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                        <button id="seg-add-custom" class="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-2 px-3 rounded-md">Add</button>
+                    </div>
+                </div>
+                <div id="seg-palette" class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2"></div>
+                <p class="text-xs text-gray-500 mt-1">ลากคอร์ดจาก Palette ไปวางใน Segment ด้านล่าง</p>
+            </div>
+
+            <!-- Segment Controls -->
+            <div class="flex items-center justify-between mb-2">
+                <h3 class="text-lg font-semibold text-primary-dark">Segments</h3>
+                <div class="flex items-center gap-2">
+                    <button id="seg-add" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg">+ Add Segment</button>
+                    <button id="seg-clear" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg">Clear All</button>
+                </div>
+            </div>
+
+            <!-- Segment List -->
+            <div id="seg-list" class="flex flex-col"></div>
+            <p class="text-xs text-gray-500 mt-2">การเล่นจะเริ่มจากด้านบน → ขวา แล้วลง Segment ถัดไป</p>
+        </section>
+        </div>
+
+        <!-- 2. Chord Suggestions Area moved into Fretboard card -->
+        <!-- 3. Chord Progression moved into Fretboard card -->
+        
+        <!-- 4. Message Box (Alternative to alert()) --><div id="message-box" class="fixed inset-0 bg-gray-900 bg-opacity-50 hidden items-center justify-center p-4 z-50">
+            <div class="bg-white p-6 rounded-lg shadow-2xl max-w-sm w-full text-center">
+                <p id="message-text" class="text-lg font-semibold mb-4"></p>
+                <button onclick="hideMessageBox()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg">ตกลง</button>
+            </div>
+        </div>
+
+    </div>
+
+    <script type="module">
+        // Global variables for Firebase setup (required by the platform)
+        const appId = window.__app_id || 'default-app-id';
+        const firebaseConfig = window.__firebase_config ? JSON.parse(window.__firebase_config) : null;
+        const initialAuthToken = window.__initial_auth_token || null;
+
+        // --- Utility Functions ---
+        function showMessageBox(message) {
+            document.getElementById('message-text').textContent = message;
+            document.getElementById('message-box').classList.remove('hidden');
+            document.getElementById('message-box').classList.add('flex');
+        }
+
+        function hideMessageBox() {
+            document.getElementById('message-box').classList.add('hidden');
+            document.getElementById('message-box').classList.remove('flex');
+        }
+
+        // --- Fretboard and Music Theory Data ---
+        const NOTES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+        const STANDARD_TUNING = [4, 9, 2, 7, 11, 4]; // E, A, D, G, B, E (0=C, 11=B)
+        const NUM_STRINGS = 6;
+        const NUM_FRETS = 24;
+        const FRET_WIDTH_BASE = 70; 
+        const TOTAL_FRETBOARD_PIXEL_WIDTH = 2400; // Not used for positioning anymore, kept for reference
+
+        // Common Chord Definitions (Intervals relative to the Root)
+        const CHORD_INTERVALS = {
+            "Major": [0, 4, 7],
+            "Minor": [0, 3, 7],
+            "Dom7": [0, 4, 7, 10],
+            "Min7": [0, 3, 7, 10],
+            "Maj7": [0, 4, 7, 11],
+            "Sus4": [0, 5, 7],
+        };
+
+        // Movable Chord Shapes (Defined by fret offsets from the root fret 'R')
+        const CHORD_SHAPES = {
+            "E_Maj_Shape": [[5, 0], [4, 2], [3, 2], [2, 1], [1, 0], [0, 0]],
+            "E_Min_Shape": [[5, 0], [4, 2], [3, 2], [2, 0], [1, 0], [0, 0]],
+            "A_Maj_Shape": [[4, 0], [3, 2], [2, 2], [1, 2], [0, 0]], 
+            "A_Min_Shape": [[4, 0], [3, 2], [2, 2], [1, 1], [0, 0]], 
+        };
+
+        // Unique colors for suggested voicings
+        const SUGGESTION_COLORS = [
+            'bg-suggest-1/70 ring-suggest-1', // Red
+            'bg-suggest-2/70 ring-suggest-2', // Blue
+            'bg-suggest-3/70 ring-suggest-3', // Green
+            'bg-suggest-4/70 ring-suggest-4', // Orange
+            'bg-purple-500/70 ring-purple-500',
+            'bg-pink-500/70 ring-pink-500',
+            'bg-yellow-500/70 ring-yellow-500',
+        ];
+
+        // --- Main Application Class ---
+        class FretboardApp {
+            constructor() {
+                this.selectedNotes = []; 
+                this.progression = []; 
+                this.progressionLimit = 7;
+                this.db = null;
+                this.auth = null;
+                this.userId = null;
+                this.doc = null;
+                this.setDoc = null;
+                this.onSnapshot = null;
+                this.draggedItem = null; // Property to hold the dragged card element
+                
+                this.dom = {
+                    fretboardContainer: document.getElementById('fretboard-container'),
+                    selectedNotesDisplay: document.getElementById('selected-notes-display'),
+                    suggestionsContainer: document.getElementById('suggested-voicings-container'),
+                    progressionContainer: document.getElementById('progression-container'),
+                    suggestedChordName: document.getElementById('suggested-chord-name'),
+                    suggestionPlaceholder: document.getElementById('suggestion-placeholder'),
+                    progressionPlaceholder: document.getElementById('progression-placeholder'),
+                    clearButton: document.getElementById('clear-button'),
+                };
+                
+                this.initFirebase();
+                this.setupListeners();
+                this.renderFretboard();
+                this.renderProgression(); 
+            }
+            
+            async initFirebase() {
+                if (!firebaseConfig) {
+                    console.warn("Firebase config not found. Persistence disabled.");
+                    return;
+                }
+
+                try {
+                    const { initializeApp } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js");
+                    const { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js");
+                    
+                    const firestoreModule = await import("https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js");
+                    const { getFirestore, doc, setDoc, onSnapshot, setLogLevel } = firestoreModule;
+
+                    this.doc = doc;
+                    this.setDoc = setDoc;
+                    this.onSnapshot = onSnapshot;
+
+                    setLogLevel('debug');
+
+                    const app = initializeApp(firebaseConfig);
+                    this.db = getFirestore(app);
+                    this.auth = getAuth(app);
+
+                    onAuthStateChanged(this.auth, async (user) => {
+                        if (user) {
+                            this.userId = user.uid;
+                            this.setupFirestoreListener();
+                        } else {
+                            if (initialAuthToken) {
+                                await signInWithCustomToken(this.auth, initialAuthToken);
+                            } else {
+                                await signInAnonymously(this.auth);
+                            }
+                        }
+                    });
+
+                } catch (error) {
+                    console.error("Error initializing Firebase:", error);
+                }
+            }
+
+            setupFirestoreListener() {
+                if (this.db && this.userId) {
+                    const progressionDocRef = this.doc(this.db, `artifacts/${appId}/users/${this.userId}/progression_data`, 'current_progression');
+                    
+                    this.onSnapshot(progressionDocRef, (docSnap) => {
+                        if (docSnap.exists()) {
+                            const data = docSnap.data();
+                            this.progression = JSON.parse(data.progressionJson || '[]');
+                            this.renderProgression();
+                            console.log("Progression loaded from Firestore.");
+                        } else {
+                            this.saveProgression(); 
+                        }
+                    }, (error) => {
+                        console.error("Error listening to progression:", error);
+                    });
+                }
+            }
+
+            async saveProgression() {
+                if (this.db && this.userId) {
+                    try {
+                        const progressionDocRef = this.doc(this.db, `artifacts/${appId}/users/${this.userId}/progression_data`, 'current_progression');
+                        const dataToSave = {
+                            progressionJson: JSON.stringify(this.progression),
+                            updatedAt: new Date().toISOString()
+                        };
+                        await this.setDoc(progressionDocRef, dataToSave, { merge: true });
+                        console.log("Progression saved to Firestore.");
+                    } catch (e) {
+                        console.error("Error saving progression:", e);
+                    }
+                }
+            }
+
+
+            setupListeners() {
+                this.dom.fretboardContainer.addEventListener('click', (e) => this.handleFretboardClick(e));
+                this.dom.clearButton.addEventListener('click', () => this.clearSelection());
+                
+                // RE-ADDED DND LISTENERS
+                this.dom.progressionContainer.addEventListener('dragstart', (e) => this.handleDragStart(e));
+                this.dom.progressionContainer.addEventListener('dragover', (e) => this.handleDragOver(e));
+                this.dom.progressionContainer.addEventListener('drop', (e) => this.handleDrop(e));
+                this.dom.progressionContainer.addEventListener('dragleave', (e) => this.handleDragLeave(e));
+            }
+
+            // --- Fretboard Rendering ---
+
+            renderFretboard() {
+                const container = this.dom.fretboardContainer;
+                container.innerHTML = '';
+                
+                // Calculate fixed pixel values for dot/line alignment
+                const FRET_LINE_WIDTH_HALF_PX = 1; // 2px / 2
+                const HALF_DOT_WIDTH_PX = 19.2 / 2; // 9.6px
+
+                // Nut Line (Fret 0)
+                const nut = document.createElement('div');
+                nut.className = 'nut-line';
+                container.appendChild(nut);
+
+                // Fret lines (Start from Fret 1)
+                for (let i = 1; i <= NUM_FRETS; i++) {
+                    const fret = document.createElement('div');
+                    fret.className = `fret-line absolute`;
+                    
+                    // Responsive Fret Line Position (using pure percentages)
+                    const leftPositionPercent = (i / NUM_FRETS) * 100;
+                    fret.style.left = `calc(${leftPositionPercent}% - ${FRET_LINE_WIDTH_HALF_PX}px)`; 
+                    
+                    // Fret number display (only for lower frets)
+                    if (i <= 12 && (i % 2 !== 0 || i === 12)) {
+                         const numLabel = document.createElement('div');
+                         numLabel.textContent = i;
+                         numLabel.className = 'fret-number-label'; 
+                         numLabel.style.left = `calc(${leftPositionPercent}% - 2px)`;
+                         fret.appendChild(numLabel);
+                    }
+
+                    container.appendChild(fret);
+                }
+
+                // Inlays (Frets 3, 5, 7, 9, 15, 17, 19, 21) and Double Inlays (12, 24)
+                const inlayFrets = [3, 5, 7, 9, 15, 17, 19, 21];
+                const doubleInlayFrets = [12, 24];
+                
+                // Responsive Inlay Position (Center of the slot)
+                const getInlayCenterPercent = (fretIndex) => {
+                    return ((fretIndex - 0.5) / NUM_FRETS) * 100; 
+                }
+
+                inlayFrets.forEach(fret => {
+                    const pos = getInlayCenterPercent(fret);
+                    const dot = document.createElement('div');
+                    dot.className = 'fret-inlay';
+                    dot.style.left = `calc(${pos}% - 10px)`; 
+                    container.appendChild(dot);
+                });
+
+                doubleInlayFrets.forEach(fret => {
+                    const pos = getInlayCenterPercent(fret);
+                    const dotTop = document.createElement('div');
+                    dotTop.className = 'fret-inlay';
+                    dotTop.style.left = `calc(${pos}% - 10px)`;
+                    dotTop.style.top = `33%`;
+                    container.appendChild(dotTop);
+                    
+                    const dotBottom = document.createElement('div');
+                    dotBottom.className = 'fret-inlay';
+                    dotBottom.style.left = `calc(${pos}% - 10px)`;
+                    dotBottom.style.top = `67%`;
+                    container.appendChild(dotBottom);
+                });
+
+                // Strings and Note Slots
+                for (let s = 0; s < NUM_STRINGS; s++) {
+                    const stringLine = document.createElement('div');
+                    const stringHeight = (s + 0.5) * (100 / NUM_STRINGS);
+                    
+                    stringLine.className = 'string-line absolute w-full';
+                    stringLine.style.top = `${stringHeight}%`;
+                    container.appendChild(stringLine);
+                    
+                    // Loop from Fret 0 (Open String)
+                    for (let f = 0; f <= NUM_FRETS; f++) { 
+                        const noteDot = document.createElement('div');
+                        noteDot.className = 'note-dot ring-4 ring-offset-2 ring-offset-gray-100'; 
+                        
+                        let dotLeft;
+                        
+                        if (f === 0) {
+                            // Fret 0 (Open String) position: Fixed position over the nut
+                            dotLeft = `-${HALF_DOT_WIDTH_PX}px`; 
+                        } else {
+                            // Fret 1 to 24: Center of the slot (Responsive)
+                            const centerPercent = ((f - 0.5) / NUM_FRETS) * 100;
+                            dotLeft = `calc(${centerPercent}% - ${HALF_DOT_WIDTH_PX}px)`; 
+                        }
+
+                        noteDot.style.left = dotLeft; 
+                        noteDot.style.top = `${stringHeight}%`; 
+                        
+                        noteDot.dataset.string = s;
+                        noteDot.dataset.fret = f;
+                        
+                        const pitch = (STANDARD_TUNING[NUM_STRINGS - 1 - s] + f) % 12;
+                        noteDot.dataset.pitch = pitch;
+                        
+                        container.appendChild(noteDot);
+                    }
+                }
+            }
+            
+            // Re-renders the selected notes and suggested chords on the Fretboard
+            updateFretboard() {
+                const noteDots = this.dom.fretboardContainer.querySelectorAll('.note-dot');
+                noteDots.forEach(dot => {
+                    // Reset to default unselected state (Gray-300, opacity 1, no shadow)
+                    dot.classList.remove('is-selected', 'bg-indigo-600', 'ring-indigo-600', 'ring-8');
+                    dot.classList.add('bg-gray-600', 'ring-gray-600');
+                    dot.classList.remove(...SUGGESTION_COLORS.flatMap(c => c.split(' '))); // Remove suggestion colors
+                    dot.style.opacity = 1; // Rely on CSS default for simple design
+                });
+                
+                // 1. Render Selected Notes
+                this.selectedNotes.forEach(note => {
+                    const dot = this.dom.fretboardContainer.querySelector(`[data-string="${note.string}"][data-fret="${note.fret}"]`);
+                    if (dot) {
+                        dot.classList.add('is-selected', 'bg-indigo-600', 'ring-indigo-600');
+                        dot.style.opacity = 1; 
+                    }
+                });
+                
+                // 2. Chord Detection & Suggestions
+                this.dom.suggestedChordName.textContent = '--';
+                if (this.selectedNotes.length >= 3) {
+                    const { chord, rootNote, voicings } = this.detectAndSuggestChord();
+                    
+                    if (chord) {
+                        this.dom.suggestedChordName.textContent = `${rootNote} ${chord}`;
+                        this.renderSuggestions(voicings);
+                        
+                        // 3. Render Suggestions on Fretboard
+                        voicings.forEach((voicing, index) => {
+                            const colorClasses = SUGGESTION_COLORS[index % SUGGESTION_COLORS.length];
+                            voicing.notes.forEach(note => {
+                                const dot = this.dom.fretboardContainer.querySelector(`[data-string="${note.string}"][data-fret="${note.fret}"]`);
+                                if (dot && !dot.classList.contains('is-selected')) {
+                                    dot.classList.remove('bg-gray-600', 'ring-gray-600'); // Remove default
+                                    dot.classList.add('ring-8', ...colorClasses.split(' ')); // Add suggestion styles
+                                    dot.style.opacity = 1; // Full opacity for suggested color
+                                }
+                            });
+                        });
+                    } else {
+                        this.renderSuggestions([]); // Clear suggestions if no chord found
+                    }
+                } else {
+                    this.renderSuggestions([]);
+                }
+                
+                // Update selected notes display
+                const selectedPitches = this.selectedNotes.map(n => NOTES[n.pitch]).join(', ');
+                this.dom.selectedNotesDisplay.textContent = selectedPitches || '--';
+            }
+
+            // --- Chord Logic ---
+
+            getSelectedPitches() {
+                return [...new Set(this.selectedNotes.map(n => n.pitch))].sort((a, b) => a - b);
+            }
+
+            detectAndSuggestChord() {
+                const pitches = this.getSelectedPitches();
+                let bestMatch = { chord: null, root: -1, matches: 0 };
+                
+                for (let root = 0; root < 12; root++) {
+                    const relativePitches = pitches.map(p => (p - root + 12) % 12).sort((a, b) => a - b);
+                    
+                    for (const [chordType, intervals] of Object.entries(CHORD_INTERVALS)) {
+                        const isSubset = intervals.every(interval => relativePitches.includes(interval));
+                        
+                        if (isSubset && intervals.length > bestMatch.matches) {
+                            bestMatch = { chord: chordType, root: root, matches: intervals.length };
+                        }
+                    }
+                }
+
+                if (bestMatch.chord) {
+                    const rootNote = NOTES[bestMatch.root];
+                    const voicings = this.suggestVoicings(bestMatch.root, bestMatch.chord);
+                    return { chord: bestMatch.chord, rootNote, voicings };
+                }
+
+                return { chord: null, rootNote: null, voicings: [] };
+            }
+
+            suggestVoicings(rootPitch, chordType) {
+                const suggestedVoicings = [];
+                let shapeKeys = [];
+                
+                if (chordType.includes('Maj') || chordType.includes('Sus')) {
+                    shapeKeys = ["E_Maj_Shape", "A_Maj_Shape"];
+                } else if (chordType.includes('Min')) {
+                    shapeKeys = ["E_Min_Shape", "A_Min_Shape"];
+                } else if (chordType.includes('Dom')) {
+                    shapeKeys = ["E_Maj_Shape", "A_Maj_Shape"];
+                }
+
+                let voicingId = 0;
+                
+                shapeKeys.forEach(shapeKey => {
+                    const shape = CHORD_SHAPES[shapeKey];
+                    const rootStringIndex = shape.find(s => s[1] === 0)?.[0] || shape[0][0]; 
+                    
+                    // Root fret can also be 0 (open chord position)
+                    for (let rootFret = 0; rootFret <= NUM_FRETS - 4; rootFret++) {
+                        // Skip if the user has already selected a note at this root fret, 
+                        // unless it's fret 0 which is often used.
+                        // For simplicity in suggestion generation, we don't strictly enforce skipping selection check here.
+                        // if (this.selectedNotes.some(n => n.fret === rootFret)) continue;
+
+                        const voicing = {
+                            id: `v${voicingId++}`,
+                            chordName: `${NOTES[rootPitch]} ${chordType}`,
+                            rootFret: rootFret,
+                            notes: []
+                        };
+
+                        shape.forEach(([stringOffset, fretOffset]) => {
+                            const stringIndex = NUM_STRINGS - 1 - stringOffset;
+                            const fret = rootFret + fretOffset;
+                            const pitch = (STANDARD_TUNING[stringIndex] + fret) % 12;
+
+                            const relativePitch = (pitch - rootPitch + 12) % 12;
+                            const intervals = CHORD_INTERVALS[chordType];
+
+                            if (fret <= NUM_FRETS && intervals.includes(relativePitch)) {
+                                voicing.notes.push({ string: stringIndex, fret: fret, pitch: pitch });
+                            } else if (fret <= NUM_FRETS && fretOffset !== 0) {
+                                if (fretOffset > 0) {
+                                     voicing.notes.push({ string: stringIndex, fret: fret, pitch: pitch });
+                                }
+                            }
+                        });
+                        
+                        const actualRootPitch = (STANDARD_TUNING[rootStringIndex] + rootFret) % 12;
+                        if (voicing.notes.length >= 3 && actualRootPitch === rootPitch) {
+                            suggestedVoicings.push(voicing);
+                        }
+                    }
+                });
+
+                // Filter to show a diverse range including Fret 0 voicings
+                return suggestedVoicings.filter(v => v.rootFret < 15).slice(0, 7);
+            }
+
+            // --- UI Interaction Handlers ---
+
+            handleFretboardClick(e) {
+                const dot = e.target.closest('.note-dot');
+                if (!dot) return;
+
+                const string = parseInt(dot.dataset.string);
+                const fret = parseInt(dot.dataset.fret);
+                const pitch = parseInt(dot.dataset.pitch);
+                
+                const index = this.selectedNotes.findIndex(n => n.string === string && n.fret === fret);
+
+                if (index > -1) {
+                    this.selectedNotes.splice(index, 1);
+                } else {
+                    this.selectedNotes.push({ string, fret, pitch });
+                }
+
+                this.updateFretboard();
+            }
+
+            clearSelection() {
+                this.selectedNotes = [];
+                this.updateFretboard();
+                this.dom.suggestedChordName.textContent = '--';
+            }
+            
+            // --- Suggestions Rendering (TABLE) ---
+
+            renderSuggestions(voicings) {
+                const container = this.dom.suggestionsContainer;
+                container.innerHTML = '';
+                
+                if (voicings.length === 0) {
+                    this.dom.suggestionPlaceholder.classList.remove('hidden');
+                    container.appendChild(this.dom.suggestionPlaceholder); 
+                    return;
+                }
+                this.dom.suggestionPlaceholder.classList.add('hidden');
+
+                // Start building the table structure
+                let tableHTML = `
+                    <table class="simple-table">
+                        <thead>
+                            <tr>
+                                <th class="w-1/4">คอร์ด</th>
+                                <th class="w-1/4">Voicing (Fret)</th>
+                                <th class="w-1/4 mini-fretboard-cell">รูปแบบ</th>
+                                <th class="w-1/4">เพิ่ม</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                `;
+                
+                voicings.forEach((voicing, index) => {
+                    const colorClasses = SUGGESTION_COLORS[index % SUGGESTION_COLORS.length];
+                    const bgColor = colorClasses.split(' ').find(c => c.startsWith('bg-'));
+
+                    const miniFretboardSvg = this.renderMiniFretboard(voicing.notes, bgColor);
+
+                    tableHTML += `
+                        <tr data-voicing-id="${voicing.id}" class="suggestion-row">
+                            <td>${voicing.chordName}</td>
+                            <td>Fret ${voicing.rootFret}</td>
+                            <td class="mini-fretboard-cell">${miniFretboardSvg}</td>
+                            <td>
+                                <button class="action-button add-button" data-voicing-id="${voicing.id}">+</button>
+                            </td>
+                        </tr>
+                    `;
+                });
+                
+                tableHTML += `</tbody></table>`;
+                
+                container.innerHTML = tableHTML;
+                
+                // Add event listeners to the new buttons
+                container.querySelectorAll('.add-button').forEach(button => {
+                    // FIX: Changed button.dataset.voicing-id to button.dataset.voicingId (camelCase)
+                    const voicingId = button.dataset.voicingId; 
+                    const voicing = voicings.find(v => v.id === voicingId);
+                    if (voicing) {
+                        button.addEventListener('click', (e) => {
+                            e.stopPropagation(); 
+                            this.addProgressionCard(voicing);
+                        });
+                    }
+                });
+            }
+
+            
+            // Creates a small SVG representation of the chord voicing
+            renderMiniFretboard(notes, bgColor) {
+                const minFret = Math.min(0, ...notes.map(n => n.fret)); // Include 0
+                const maxFret = Math.max(4, ...notes.map(n => n.fret));
+                
+                const numMiniFrets = Math.max(4, maxFret - minFret + 1);
+                const startFret = minFret; // Start at fret 0 or the lowest fret used
+                
+                const width = 60;
+                const height = 40;
+                const stringSpacing = height / (NUM_STRINGS - 1);
+                const fretSpacing = width / (numMiniFrets);
+                
+                let svg = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" class="mx-auto">`;
+                
+                // Strings
+                for (let s = 0; s < NUM_STRINGS; s++) {
+                    const y = s * stringSpacing;
+                    svg += `<line x1="0" y1="${y}" x2="${width}" y2="${y}" stroke="#6b7280" stroke-width="0.5"/>`;
+                }
+                
+                // Frets (including nut/zero fret at x=0)
+                for (let f = 0; f <= numMiniFrets; f++) {
+                    const x = f * fretSpacing;
+                    // Draw a thick line for the nut (fret 0) if it's the start
+                    const strokeWidth = (startFret === 0 && f === 0) ? 2 : 1;
+                    svg += `<line x1="${x}" y1="0" x2="${x}" y2="${height}" stroke="#374151" stroke-width="${strokeWidth}"/>`;
+                }
+                
+                // Dots
+                notes.forEach(note => {
+                    const stringIndex = NUM_STRINGS - 1 - note.string; 
+                    const fretPos = note.fret - startFret; // Position relative to startFret
+                    
+                    let cx;
+                    if (note.fret === 0) {
+                        // Open string dot sits at the position of the Nut line
+                        cx = 0; 
+                    } else {
+                        // Fret dot sits in the middle of the fret space
+                        cx = fretPos * fretSpacing + (fretSpacing / 2);
+                    }
+                    
+                    const cy = stringIndex * stringSpacing;
+                    
+                    if (cx >= 0 && cx <= width) {
+                        svg += `<circle cx="${cx}" cy="${cy}" r="3.5" fill="${bgColor.replace('bg-', '#').replace('/70', '')}" stroke="#fff" stroke-width="0.5"/>`;
+                    }
+                });
+                
+                svg += `</svg>`;
+                return svg;
+            }
+
+            // --- Progression Logic (DND Card Reimplementation) ---
+
+            addProgressionCard(voicing) {
+                if (this.progression.length >= this.progressionLimit) {
+                    showMessageBox(`ลำดับคอร์ดเต็มแล้ว! (จำกัดสูงสุด ${this.progressionLimit} คอร์ด)`);
+                    return;
+                }
+                
+                const newCard = {
+                    id: crypto.randomUUID(),
+                    chordName: voicing.chordName,
+                    rootFret: voicing.rootFret,
+                    notes: voicing.notes,
+                    color: SUGGESTION_COLORS[this.progression.length % SUGGESTION_COLORS.length].split(' ').find(c => c.startsWith('bg-')),
+                };
+                
+                this.progression.push(newCard);
+                this.renderProgression();
+                this.saveProgression();
+            }
+            
+            removeProgressionCard(id) {
+                const index = this.progression.findIndex(c => c.id === id);
+                if (index > -1) {
+                    this.progression.splice(index, 1);
+                    this.renderProgression();
+                    this.saveProgression();
+                }
+            }
+
+            renderProgression() {
+                const container = this.dom.progressionContainer;
+                container.innerHTML = '';
+                
+                if (this.progression.length === 0) {
+                    this.dom.progressionPlaceholder.classList.remove('hidden');
+                    container.appendChild(this.dom.progressionPlaceholder);
+                    return;
+                }
+                this.dom.progressionPlaceholder.classList.add('hidden');
+                
+                // Render Cards horizontally
+                this.progression.forEach((cardData, index) => {
+                    const bgColor = cardData.color;
+                    const miniFretboardSvg = this.renderMiniFretboard(cardData.notes, bgColor);
+                    
+                    const card = document.createElement('div');
+                    // Use flex/col and align center for card content
+                    card.className = `chord-card ${bgColor} flex flex-col items-center justify-between shadow-md`; 
+                    card.draggable = true;
+                    card.dataset.id = cardData.id;
+                    card.dataset.index = index;
+                    card.dataset.chordName = cardData.chordName;
+                    
+                    card.innerHTML = `
+                        <button class="remove-btn absolute top-1 right-1 p-1 text-white opacity-70 hover:opacity-100 hover:scale-110 transition" data-id="${cardData.id}">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-x"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                        </button>
+                        <div class="text-xs font-semibold w-full text-left opacity-80 mb-1">${index + 1}. Fret ${cardData.rootFret}</div>
+                        <div class="text-2xl font-black">${cardData.chordName}</div>
+                        <div class="mt-2 h-10 w-full flex items-center justify-center">
+                            ${miniFretboardSvg}
+                        </div>
+                    `;
+                    
+                    container.appendChild(card);
+                    
+                    card.querySelector('.remove-btn').addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.removeProgressionCard(cardData.id);
+                    });
+                });
+            }
+            
+            // --- Drag and Drop Handlers (Reimplemented) ---
+            
+            handleDragStart(e) {
+                const card = e.target.closest('.chord-card');
+                if (!card) return;
+                
+                e.dataTransfer.setData('text/plain', card.dataset.id);
+                if (card.dataset.chordName) {
+                    // Allow dragging from Progression into Segment Composer
+                    e.dataTransfer.setData('application/x-chord-name', card.dataset.chordName);
+                }
+                e.dataTransfer.effectAllowed = 'move';
+                card.classList.add('dragging');
+                this.draggedItem = card;
+            }
+
+            handleDragOver(e) {
+                e.preventDefault();
+                e.dataTransfer.dropEffect = 'move';
+                
+                const container = this.dom.progressionContainer;
+                const target = e.target.closest('.chord-card');
+                
+                if (!target || target === this.draggedItem) return;
+
+                const targetRect = target.getBoundingClientRect();
+                // Determine if dropping before or after the target card based on mouse position
+                const insertBefore = e.clientX < targetRect.left + targetRect.width / 2;
+                
+                if (this.draggedItem) {
+                    if (insertBefore) {
+                        container.insertBefore(this.draggedItem, target);
+                    } else {
+                        container.insertBefore(this.draggedItem, target.nextSibling);
+                    }
+                }
+            }
+            
+            handleDrop(e) {
+                e.preventDefault();
+                const id = e.dataTransfer.getData('text/plain');
+                const droppedCard = document.querySelector(`.chord-card[data-id="${id}"]`);
+                
+                if (droppedCard) {
+                    droppedCard.classList.remove('dragging');
+                    
+                    // Re-sort the underlying progression array based on the DOM order
+                    const newOrderIds = Array.from(this.dom.progressionContainer.querySelectorAll('.chord-card')).map(card => card.dataset.id);
+                    const newProgression = newOrderIds.map(newId => this.progression.find(card => card.id === newId));
+                    
+                    this.progression = newProgression.filter(c => c); 
+                    
+                    this.renderProgression(); // Re-render to update index numbers
+                    this.saveProgression();
+                }
+                this.draggedItem = null;
+            }
+
+            handleDragLeave(e) {
+                 if (this.draggedItem) {
+                    // This is a subtle fix for drag leave behavior
+                    // In simple dnd, we often don't need this, but for cleanup:
+                    if (!this.dom.progressionContainer.contains(e.relatedTarget)) {
+                       this.draggedItem.classList.remove('dragging');
+                    }
+                }
+            }
+        }
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', () => {
+            window.fretboardApp = new FretboardApp();
+        });
+
+    </script>
+
+    <style>
+        .seg-chord { user-select: none; }
+        .seg-chord.playing { outline: 3px solid #4f46e5; outline-offset: 2px; }
+        .seg-segment .seg-dup, .seg-segment .seg-del { opacity: 0; transition: opacity .15s ease; }
+        .seg-segment:hover .seg-dup, .seg-segment:hover .seg-del { opacity: 1; }
+    </style>
+
+    <script>
+    (function(){
+        // --- Utilities ---
+        const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+        const NAME_TO_SEMI = {C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
+        const clamp = (n,min,max)=>Math.max(min,Math.min(max,n));
+
+        function parseChord(name){
+            if(!name) return {root:"C", type:"maj", intervals:[0,4,7]};
+            name = name.trim();
+            // Extract root (A-G with optional #/b)
+            const m = name.match(/^([A-G](?:#|b)?)(.*)$/i);
+            if(!m) return {root:"C", type:"maj", intervals:[0,4,7]};
+            const root = m[1].toUpperCase().replace('B#','C').replace('E#','F');
+            const qual = (m[2]||'').trim().toLowerCase();
+            // Map quality to intervals
+            let type = 'maj', iv=[0,4,7];
+            if(qual === 'm' || qual.startsWith('min')) { type='min'; iv=[0,3,7]; }
+            else if(qual.startsWith('dim')) { type='dim'; iv=[0,3,6]; }
+            else if(qual.startsWith('aug') || qual.includes('+')) { type='aug'; iv=[0,4,8]; }
+            else if(qual === '7' || qual.endsWith('7') && !qual.includes('maj')) { type='7'; iv=[0,4,7,10]; }
+            else if(qual.includes('maj7')) { type='maj7'; iv=[0,4,7,11]; }
+            else if(qual.includes('m7')) { type='m7'; iv=[0,3,7,10]; }
+            return {root,type,intervals:iv};
+        }
+
+        function chordToMidiNotes(chord){
+            const semi = NAME_TO_SEMI[chord.root] ?? 0;
+            // Voice near C3..B3
+            const base = 48; // C3
+            const rootMidi = base + semi;
+            const notes = chord.intervals.map(i=>rootMidi + i);
+            // Keep top note not too muddy; if too low, shift up an octave
+            while(notes[notes.length-1] < 60) {
+                for(let i=0;i<notes.length;i++) notes[i]+=12;
+                if(notes[notes.length-1]>=60) break;
+            }
+            return notes;
+        }
+
+        // --- Audio Engine ---
+        class AudioEngine{
+            constructor(){
+                this.ctx = null;
+                this.events = [];
+                this.running = false;
+            }
+            ensure(){ if(!this.ctx) this.ctx = new (window.AudioContext||window.webkitAudioContext)(); return this.ctx; }
+            stop(){
+                this.running = false;
+                // stop scheduled nodes
+                this.events.forEach(e=>{ try{ if(e.stop) e.stop(); }catch{} });
+                this.events = [];
+            }
+            secondsPerBeat(bpm,den){ return (60/Math.max(30,bpm)) * (4/den); }
+            scheduleTick(t,accent=false){
+                const ctx=this.ensure();
+                const o=ctx.createOscillator();
+                const g=ctx.createGain();
+                o.type='square';
+                o.frequency.value = accent? 1400: 1000;
+                g.gain.setValueAtTime(0.0001, t);
+                g.gain.exponentialRampToValueAtTime(0.4, t+0.005);
+                g.gain.exponentialRampToValueAtTime(0.0001, t+0.04);
+                o.connect(g).connect(ctx.destination);
+                o.start(t); o.stop(t+0.05);
+                this.events.push(o);
+            }
+            playChord(notes, tStart, dur){
+                const ctx=this.ensure();
+                const voices = notes.map(n=>{
+                    const o=ctx.createOscillator();
+                    const g=ctx.createGain();
+                    o.type='sawtooth';
+                    const freq = 440*Math.pow(2,(n-69)/12);
+                    o.frequency.setValueAtTime(freq, tStart);
+                    g.gain.setValueAtTime(0.0001, tStart);
+                    g.gain.exponentialRampToValueAtTime(0.25, tStart+0.02);
+                    g.gain.exponentialRampToValueAtTime(0.0001, tStart+dur-0.02);
+                    o.connect(g).connect(ctx.destination);
+                    o.start(tStart);
+                    o.stop(tStart+dur);
+                    return o;
+                });
+                this.events.push(...voices);
+            }
+        }
+
+        // --- DOM helpers ---
+        const $ = sel => document.querySelector(sel);
+        const $$ = sel => Array.from(document.querySelectorAll(sel));
+
+        // --- App State ---
+        const state = {
+            segments: [], // {id, name, chords:["C","Am",...]}
+            playingTimers: [],
+            engine: new AudioEngine(),
+            ids: 0
+        };
+
+        // --- UI Rendering ---
+        function renderPalette(){
+            const rootMaj = NOTES.map(n=>n);
+            const rootMin = NOTES.map(n=>n+"m");
+            const extras = ['maj7','m7','7'].flatMap(q=>['C','D','E','F','G','A','B'].map(n=>n+q)).slice(0,7);
+            const items = [...rootMaj, ...rootMin, ...extras];
+            const wrap = $('#seg-palette');
+            wrap.innerHTML='';
+            items.forEach(ch=>{
+                const el=document.createElement('div');
+                el.className='seg-chord inline-flex items-center justify-center px-3 py-2 rounded-md bg-indigo-600 text-white shadow cursor-grab select-none';
+                el.textContent=ch;
+                el.draggable=true;
+                el.dataset.chord=ch;
+                el.addEventListener('dragstart',ev=>{
+                    ev.dataTransfer.setData('text/plain', ch);
+                    ev.dataTransfer.setData('application/x-chord-name', ch);
+                });
+                wrap.appendChild(el);
+            });
+        }
+
+        function addSegment(name='Intro'){
+            state.segments.push({id: 'seg_'+(++state.ids), name, chords: []});
+            renderSegments();
+        }
+
+        function duplicateSegment(id){
+            const idx = state.segments.findIndex(s=>s.id===id);
+            if(idx<0) return;
+            const s = state.segments[idx];
+            const copy = {id:'seg_'+(++state.ids), name: s.name+' (copy)', chords:[...s.chords]};
+            state.segments.splice(idx+1,0,copy);
+            renderSegments();
+        }
+
+        function removeSegment(id){
+            state.segments = state.segments.filter(s=>s.id!==id);
+            renderSegments();
+        }
+
+        function removeChord(segId, idx){
+            const s=state.segments.find(s=>s.id===segId); if(!s) return;
+            s.chords.splice(idx,1); renderSegments();
+        }
+
+        function insertChord(segId, chord){
+            const s=state.segments.find(s=>s.id===segId); if(!s) return;
+            s.chords.push(chord);
+            renderSegments();
+        }
+
+        function renderSegments(){
+            const list = $('#seg-list');
+            list.innerHTML='';
+            state.segments.forEach(seg=>{
+                const box = document.createElement('div');
+                box.className='seg-segment border rounded-lg p-3 mb-3 bg-gray-50';
+                box.dataset.id=seg.id;
+                box.innerHTML = `
+                    <div class="flex items-center justify-between mb-2">
+                        <input class="seg-name text-base font-semibold bg-transparent focus:outline-none px-1 rounded hover:bg-white focus:bg-white" value="${seg.name}" />
+                        <div class="flex items-center gap-2">
+                            <button class="seg-dup text-xs bg-sky-600 hover:bg-sky-700 text-white px-2 py-1 rounded">Duplicate</button>
+                            <button class="seg-del text-xs bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded">Delete</button>
+                        </div>
+                    </div>
+                    <div class="seg-drop flex flex-wrap gap-2 min-h-[56px] p-2 border-2 border-dashed border-gray-300 rounded bg-white"></div>
+                `;
+                const drop = box.querySelector('.seg-drop');
+                // Populate chords
+                seg.chords.forEach((ch,i)=>{
+                    const c = document.createElement('div');
+                    c.className='group seg-chord relative inline-flex items-center justify-center px-3 py-2 rounded-md bg-indigo-600 text-white shadow cursor-grab';
+                    c.draggable=true; c.dataset.chord=ch; c.dataset.idx=i;
+                    c.innerHTML = `<span>${ch}</span>
+                        <div class="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
+                            <button class="seg-ch-copy bg-indigo-500 text-white text-[10px] px-1.5 py-0.5 rounded">⧉</button>
+                            <button class="seg-ch-del bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded">×</button>
+                        </div>`;
+                    // chord drag
+                    c.addEventListener('dragstart',ev=>{
+                        ev.dataTransfer.setData('text/plain', ch);
+                        ev.dataTransfer.setData('application/x-seg-id', seg.id);
+                        ev.dataTransfer.setData('application/x-seg-idx', String(i));
+                    });
+                    // chord dragover/drop to allow reordering (swap/insert)
+                    c.addEventListener('dragover', ev => { ev.preventDefault(); });
+                    c.addEventListener('drop', ev => {
+                        ev.preventDefault();
+                        const rect = c.getBoundingClientRect();
+                        const insertBefore = ev.clientX < rect.left + rect.width/2;
+                        const targetIdxBase = parseInt(c.dataset.idx, 10) || 0;
+                        let destIndex = insertBefore ? targetIdxBase : targetIdxBase + 1;
+
+                        const srcSegId = ev.dataTransfer.getData('application/x-seg-id');
+                        const srcIdxStr = ev.dataTransfer.getData('application/x-seg-idx');
+                        const chordName = ev.dataTransfer.getData('application/x-chord-name') || ev.dataTransfer.getData('text/plain');
+
+                        if (srcSegId && srcIdxStr !== '') {
+                            const source = state.segments.find(s=>s.id===srcSegId);
+                            const target = state.segments.find(s=>s.id===seg.id);
+                            if (!source || !target) return;
+                            const srcIndex = parseInt(srcIdxStr,10);
+                            const [moved] = source.chords.splice(srcIndex,1);
+                            if (source.id === target.id && srcIndex < destIndex) destIndex -= 1;
+                            target.chords.splice(destIndex,0,moved);
+                            renderSegments();
+                        } else if (chordName) {
+                            const target = state.segments.find(s=>s.id===seg.id);
+                            target.chords.splice(destIndex,0,chordName);
+                            renderSegments();
+                        }
+                    });
+                    // chord quick duplicate/delete
+                    c.querySelector('.seg-ch-copy').addEventListener('click',()=>{ insertChord(seg.id, ch); });
+                    c.querySelector('.seg-ch-del').addEventListener('click',()=>{ removeChord(seg.id, i); });
+                    drop.appendChild(c);
+                });
+
+                // Drop handling (append or move to end)
+                drop.addEventListener('dragover',ev=>ev.preventDefault());
+                drop.addEventListener('drop',ev=>{
+                    ev.preventDefault();
+                    const srcSegId = ev.dataTransfer.getData('application/x-seg-id');
+                    const srcIdxStr = ev.dataTransfer.getData('application/x-seg-idx');
+                    if (srcSegId && srcIdxStr !== '') {
+                        const source = state.segments.find(s=>s.id===srcSegId);
+                        const target = state.segments.find(s=>s.id===seg.id);
+                        if (!source || !target) return;
+                        const srcIndex = parseInt(srcIdxStr,10);
+                        const [moved] = source.chords.splice(srcIndex,1);
+                        target.chords.push(moved);
+                        renderSegments();
+                        return;
+                    }
+                    const chord = ev.dataTransfer.getData('application/x-chord-name') || ev.dataTransfer.getData('text/plain');
+                    if(chord) insertChord(seg.id, chord);
+                });
+
+                // Header actions
+                box.querySelector('.seg-dup').addEventListener('click',()=>duplicateSegment(seg.id));
+                box.querySelector('.seg-del').addEventListener('click',()=>removeSegment(seg.id));
+                box.querySelector('.seg-name').addEventListener('change',e=>{ seg.name = e.target.value; });
+
+                list.appendChild(box);
+            });
+        }
+
+        // --- Playback ---
+        function clearPlayIndicators(){ $$('#seg-list .seg-chord').forEach(c=>c.classList.remove('playing')); }
+
+        function playAll(){
+            stopAll();
+            const bpm = parseFloat($('#seg-bpm').value)||100;
+            const num = parseInt($('#seg-time-num').value)||4;
+            const den = parseInt($('#seg-time-den').value)||4;
+            const withClick = $('#seg-metronome').checked;
+            const ctx = state.engine.ensure();
+            const spb = state.engine.secondsPerBeat(bpm, den);
+            const bar = spb * num;
+            let t = ctx.currentTime + 0.1;
+            let elapsedBars = 0;
+
+            // Schedule chords per segment
+            state.segments.forEach(seg=>{
+                seg.chords.forEach((name, idx)=>{
+                    const chord = parseChord(name);
+                    const midi = chordToMidiNotes(chord);
+                    state.engine.playChord(midi, t, bar * 1.0);
+                    // UI indicator
+                    const markerDelay = (t - ctx.currentTime) * 1000;
+                    const clearDelay  = ((t + bar) - ctx.currentTime) * 1000;
+                    const cardEl = Array.from($('#seg-list').querySelectorAll('.seg-segment'))
+                        .find(el=>el.dataset.id===seg.id)
+                        ?.querySelectorAll('.seg-chord')[idx];
+                    if(cardEl){
+                        const onTimer = setTimeout(()=>{ clearPlayIndicators(); cardEl.classList.add('playing'); }, markerDelay);
+                        const offTimer = setTimeout(()=>{ cardEl.classList.remove('playing'); }, clearDelay);
+                        state.playingTimers.push(onTimer, offTimer);
+                    }
+                    t += bar;
+                    elapsedBars++;
+                });
+            });
+
+            // Metronome ticks
+            if(withClick && elapsedBars>0){
+                const totalBeats = elapsedBars * num;
+                let tickTime = ctx.currentTime + 0.1;
+                for(let b=0; b<totalBeats; b++){
+                    const accent = (b % num)===0;
+                    state.engine.scheduleTick(tickTime, accent);
+                    tickTime += spb;
+                }
+            }
+            state.engine.running = true;
+        }
+
+        function stopAll(){
+            state.engine.stop();
+            state.playingTimers.forEach(id=>clearTimeout(id));
+            state.playingTimers = [];
+            clearPlayIndicators();
+        }
+
+        // --- Wire up controls ---
+        document.addEventListener('DOMContentLoaded', ()=>{
+            renderPalette();
+            // default two segments like example
+            addSegment('Intro');
+            addSegment('Verse I');
+
+            $('#seg-add').addEventListener('click', ()=>{
+                const name = prompt('ตั้งชื่อ Segment', 'New Segment') || 'New Segment';
+                addSegment(name);
+            });
+            $('#seg-clear').addEventListener('click', ()=>{ state.segments=[]; renderSegments(); stopAll(); });
+            $('#seg-play').addEventListener('click', playAll);
+            $('#seg-stop').addEventListener('click', stopAll);
+            $('#seg-add-custom').addEventListener('click', ()=>{
+                const v = ($('#seg-custom-chord').value||'').trim();
+                if(!v) return;
+                const el=document.createElement('div');
+                el.className='seg-chord inline-flex items-center justify-center px-3 py-2 rounded-md bg-indigo-600 text-white shadow cursor-grab select-none';
+                el.textContent=v; el.draggable=true; el.dataset.chord=v;
+                el.addEventListener('dragstart',ev=>{ ev.dataTransfer.setData('text/plain', v); ev.dataTransfer.setData('application/x-chord-name', v); });
+                $('#seg-palette').appendChild(el);
+                $('#seg-custom-chord').value='';
+            });
+        });
+    })();
+    </script>
+</body>
+</html>
