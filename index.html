@@ -1066,6 +1066,14 @@
         .seg-chord.playing { outline: 3px solid #4f46e5; outline-offset: 2px; }
         .seg-segment .seg-dup, .seg-segment .seg-del { opacity: 0; transition: opacity .15s ease; }
         .seg-segment:hover .seg-dup, .seg-segment:hover .seg-del { opacity: 1; }
+        .seg-overlay { position: absolute; border-radius: 14px; box-sizing: border-box; pointer-events: none; }
+        .seg-overlay-selection { border: 2px dashed rgba(245, 158, 11, 0.9); background-color: rgba(251, 191, 36, 0.1); z-index: 40; }
+        .seg-overlay-group { pointer-events: auto; border: 2px solid rgba(14, 165, 233, 0.85); background-color: rgba(14, 165, 233, 0.08); z-index: 30; transition: border 0.15s ease, box-shadow 0.15s ease; }
+        .seg-overlay-group.is-selected { border: 3px solid rgba(245, 158, 11, 0.95); background-color: rgba(251, 191, 36, 0.14); box-shadow: 0 8px 18px -12px rgba(251,191,36,0.7); z-index: 50; }
+        .seg-overlay-group.is-editing { pointer-events: none; }
+        .seg-overlay-toolbar { position: absolute; top: -2.6rem; left: 50%; transform: translateX(-50%); display: flex; gap: 0.5rem; pointer-events: auto; z-index: 60; }
+        .seg-overlay-toolbar button { pointer-events: auto; }
+        .seg-overlay-toolbar-selection { top: auto; }
     </style>
 
     <script>
@@ -1162,10 +1170,13 @@
 
         // --- App State ---
         const state = {
-            segments: [], // {id, name, chords:["C","Am",...]}
+            segments: [], // {id, name, chords:["C","Am",...], selection:{anchor:number|null, indices:Set}, groups:[{id,start,end}]}
             playingTimers: [],
             engine: new AudioEngine(),
-            ids: 0
+            ids: 0,
+            groupIds: 0,
+            groupEdit: null, // {segId, groupId}
+            selectedGroup: null // {segId, groupId}
         };
 
         // --- UI Rendering ---
@@ -1191,7 +1202,12 @@
         }
 
         function addSegment(name='Intro'){
-            state.segments.push({id: 'seg_'+(++state.ids), name, chords: []});
+            state.segments.push({
+                id: 'seg_'+(++state.ids), name,
+                chords: [],
+                selection: { anchor: null, indices: new Set() },
+                groups: []
+            });
             renderSegments();
         }
 
@@ -1199,13 +1215,22 @@
             const idx = state.segments.findIndex(s=>s.id===id);
             if(idx<0) return;
             const s = state.segments[idx];
-            const copy = {id:'seg_'+(++state.ids), name: s.name+' (copy)', chords:[...s.chords]};
+            const copyGroups = s.groups.map(g=>({ id: 'grp_'+(++state.groupIds), start: g.start, end: g.end }));
+            const copy = {
+                id:'seg_'+(++state.ids),
+                name: s.name+' (copy)',
+                chords:[...s.chords],
+                selection: { anchor: null, indices: new Set() },
+                groups: copyGroups
+            };
             state.segments.splice(idx+1,0,copy);
             renderSegments();
         }
 
         function removeSegment(id){
             state.segments = state.segments.filter(s=>s.id!==id);
+            if (state.selectedGroup && state.selectedGroup.segId===id) state.selectedGroup=null;
+            if (state.groupEdit && state.groupEdit.segId===id) state.groupEdit=null;
             renderSegments();
         }
 
@@ -1220,10 +1245,29 @@
             renderSegments();
         }
 
+        function normalizeGroups(seg){
+            // Remove invalid groups and clamp ranges
+            const max = seg.chords.length - 1;
+            seg.groups = seg.groups
+                .map(g=>({ ...g, start: clamp(Math.min(g.start,g.end),0,Math.max(0,max)), end: clamp(Math.max(g.start,g.end),0,Math.max(0,max)) }))
+                .filter(g=> g.start <= g.end && max >= 0);
+        }
+
+        function exitGroupEdit(){ state.groupEdit = null; renderSegments(); }
+
         function renderSegments(){
             const list = $('#seg-list');
             list.innerHTML='';
             state.segments.forEach(seg=>{
+                normalizeGroups(seg);
+                if (!seg.selection){
+                    seg.selection = { anchor: null, indices: new Set() };
+                } else {
+                    if (!(seg.selection.indices instanceof Set)){
+                        seg.selection.indices = new Set(seg.selection.indices ? Array.from(seg.selection.indices) : []);
+                    }
+                }
+                if (!Array.isArray(seg.groups)) seg.groups = [];
                 const box = document.createElement('div');
                 box.className='seg-segment border rounded-lg p-3 mb-3 bg-gray-50';
                 box.dataset.id=seg.id;
@@ -1235,9 +1279,30 @@
                             <button class="seg-del text-xs bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded">Delete</button>
                         </div>
                     </div>
-                    <div class="seg-drop flex flex-wrap gap-2 min-h-[56px] p-2 border-2 border-dashed border-gray-300 rounded bg-white"></div>
-                `;
+                    <div class="seg-drop relative flex flex-wrap gap-2 min-h-[56px] p-2 border-2 border-dashed border-gray-300 rounded bg-white"></div>
+                    `;
+                list.appendChild(box);
                 const drop = box.querySelector('.seg-drop');
+                const computeOverlayRect = (indices, pad=4)=>{
+                    if (!indices.length) return null;
+                    let minLeft=Infinity, maxRight=-Infinity, minTop=Infinity, maxBottom=-Infinity;
+                    const host = drop.getBoundingClientRect();
+                    for (const idx of indices){
+                        const el = drop.querySelector(`.seg-chord[data-idx="${idx}"]`);
+                        if (!el) return null;
+                        const rect = el.getBoundingClientRect();
+                        if (rect.left < minLeft) minLeft = rect.left;
+                        if (rect.right > maxRight) maxRight = rect.right;
+                        if (rect.top < minTop) minTop = rect.top;
+                        if (rect.bottom > maxBottom) maxBottom = rect.bottom;
+                    }
+                    return {
+                        left: minLeft - host.left - pad,
+                        top: minTop - host.top - pad,
+                        width: maxRight - minLeft + pad*2,
+                        height: maxBottom - minTop + pad*2
+                    };
+                };
                 // Populate chords
                 seg.chords.forEach((ch,i)=>{
                     const c = document.createElement('div');
@@ -1248,6 +1313,20 @@
                             <button class="seg-ch-copy bg-indigo-500 text-white text-[10px] px-1.5 py-0.5 rounded">⧉</button>
                             <button class="seg-ch-del bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded">×</button>
                         </div>`;
+                    // Selection visual
+                    if (seg.selection.indices.has(i)) {
+                        c.classList.add('ring-2','ring-amber-400');
+                    }
+                    // Disabled outside group edit
+                    if (state.groupEdit){
+                        const ge = state.groupEdit;
+                        const g = seg.groups.find(g=>g.id===ge.groupId);
+                        const inThisGroup = ge.segId===seg.id && g && i>=g.start && i<=g.end;
+                        if (!inThisGroup) {
+                            c.style.opacity = '0.5';
+                            c.style.pointerEvents = 'none';
+                        }
+                    }
                     // chord drag
                     c.addEventListener('dragstart',ev=>{
                         ev.dataTransfer.setData('text/plain', ch);
@@ -1258,6 +1337,11 @@
                     c.addEventListener('dragover', ev => { ev.preventDefault(); });
                     c.addEventListener('drop', ev => {
                         ev.preventDefault();
+                        // Restrict when editing a group
+                        if (state.groupEdit){
+                            const ge = state.groupEdit; if (ge.segId !== seg.id) return;
+                            const g = seg.groups.find(g=>g.id===ge.groupId); if (!g) return;
+                        }
                         const rect = c.getBoundingClientRect();
                         const insertBefore = ev.clientX < rect.left + rect.width/2;
                         const targetIdxBase = parseInt(c.dataset.idx, 10) || 0;
@@ -1272,15 +1356,64 @@
                             const target = state.segments.find(s=>s.id===seg.id);
                             if (!source || !target) return;
                             const srcIndex = parseInt(srcIdxStr,10);
+                            // In edit mode, enforce in-group move only
+                            if (state.groupEdit){
+                                const ge = state.groupEdit; const g = target.groups.find(g=>g.id===ge.groupId);
+                                if (!g) return;
+                                if (!(srcIndex>=g.start && srcIndex<=g.end)) return;
+                                // adjust destIndex to be within group
+                                if (destIndex<g.start) destIndex = g.start;
+                                if (destIndex>g.end+1) destIndex = g.end+1;
+                            }
                             const [moved] = source.chords.splice(srcIndex,1);
                             if (source.id === target.id && srcIndex < destIndex) destIndex -= 1;
                             target.chords.splice(destIndex,0,moved);
+                            // shift groups if moved across
+                            if (source.id === target.id){
+                                // update group ranges within same segment
+                                target.groups.forEach(g=>{
+                                    if (srcIndex>=g.start && srcIndex<=g.end){
+                                        // moving item within same group range already handled by indices shift below
+                                    }
+                                    if (srcIndex < destIndex){
+                                        // moved forward
+                                        if (g.start>srcIndex && g.start<=destIndex) g.start-=1;
+                                        if (g.end>=srcIndex && g.end<destIndex) g.end-=1;
+                                    } else if (srcIndex > destIndex){
+                                        // moved backward
+                                        if (g.start>=destIndex && g.start<srcIndex) g.start+=1;
+                                        if (g.end>=destIndex && g.end<srcIndex) g.end+=1;
+                                    }
+                                });
+                            }
                             renderSegments();
                         } else if (chordName) {
                             const target = state.segments.find(s=>s.id===seg.id);
+                            if (state.groupEdit){
+                                const ge = state.groupEdit; const g = target.groups.find(g=>g.id===ge.groupId); if (!g) return;
+                                if (destIndex<g.start) destIndex = g.start;
+                                if (destIndex>g.end+1) destIndex = g.end+1;
+                            }
                             target.chords.splice(destIndex,0,chordName);
                             renderSegments();
                         }
+                    });
+                    // selection: click / shift-click
+                    c.addEventListener('click', (ev)=>{
+                        if (state.groupEdit) return; // no selection change during group edit
+                        const idx = i;
+                        if (ev.shiftKey && seg.selection.anchor!=null){
+                            seg.selection.indices.clear();
+                            const a = seg.selection.anchor;
+                            const lo = Math.min(a, idx), hi=Math.max(a, idx);
+                            for(let k=lo;k<=hi;k++) seg.selection.indices.add(k);
+                        } else {
+                            seg.selection.indices.clear();
+                            seg.selection.indices.add(idx);
+                            seg.selection.anchor = idx;
+                        }
+                        renderSegments();
+                        ev.stopPropagation();
                     });
                     // chord quick duplicate/delete
                     c.querySelector('.seg-ch-copy').addEventListener('click',()=>{ insertChord(seg.id, ch); });
@@ -1292,6 +1425,28 @@
                 drop.addEventListener('dragover',ev=>ev.preventDefault());
                 drop.addEventListener('drop',ev=>{
                     ev.preventDefault();
+                    if (state.groupEdit){
+                        // Disallow dropping at container level during group edit
+                        return;
+                    }
+                    // Helper to compute insert index from mouse X position
+                    const computeIndexFromX = (clientX)=>{
+                        const cards = Array.from(drop.querySelectorAll('.seg-chord'));
+                        for (let idx=0; idx<cards.length; idx++){
+                            const r = cards[idx].getBoundingClientRect();
+                            const center = r.left + r.width/2;
+                            if (clientX < center) return idx;
+                        }
+                        return cards.length;
+                    };
+                    // Group move
+                    const grpJson = ev.dataTransfer.getData('application/x-group');
+                    if (grpJson){
+                        const gdat = JSON.parse(grpJson);
+                        const destIndex = computeIndexFromX(ev.clientX);
+                        moveGroupById(gdat.segId, gdat.groupId, seg.id, destIndex);
+                        return;
+                    }
                     const srcSegId = ev.dataTransfer.getData('application/x-seg-id');
                     const srcIdxStr = ev.dataTransfer.getData('application/x-seg-idx');
                     if (srcSegId && srcIdxStr !== '') {
@@ -1308,12 +1463,139 @@
                     if(chord) insertChord(seg.id, chord);
                 });
 
+                // Selection toolbar: show when there is a contiguous selection >=2
+                const sel = Array.from(seg.selection.indices).sort((a,b)=>a-b);
+                const contiguous = sel.length>=2 && sel.every((v,idx)=> idx===0 || v===sel[0]+idx);
+                if (sel.length && contiguous){
+                    const rect = computeOverlayRect(sel, 6);
+                    if (rect){
+                        const overlay = document.createElement('div');
+                        overlay.className = 'seg-overlay seg-overlay-selection';
+                        overlay.style.left = rect.left + 'px';
+                        overlay.style.top = rect.top + 'px';
+                        overlay.style.width = rect.width + 'px';
+                        overlay.style.height = rect.height + 'px';
+                        drop.appendChild(overlay);
+
+                        const toolbar = document.createElement('div');
+                        toolbar.className = 'seg-overlay-toolbar seg-overlay-toolbar-selection';
+                        toolbar.style.left = (rect.left + rect.width / 2) + 'px';
+                        toolbar.style.top = (rect.top - 44) + 'px';
+                        toolbar.style.transform = 'translateX(-50%)';
+                        toolbar.innerHTML = `
+                            <button class="seg-make-group bg-amber-500 hover:bg-amber-600 text-white text-xs px-3 py-1 rounded">Group</button>
+                        `;
+                        drop.appendChild(toolbar);
+                        toolbar.querySelector('.seg-make-group').addEventListener('click',(e)=>{
+                            e.stopPropagation();
+                            const g = { id: 'grp_'+(++state.groupIds), start: sel[0], end: sel[sel.length-1] };
+                            seg.groups.push(g);
+                            seg.selection.indices.clear(); seg.selection.anchor=null;
+                            renderSegments();
+                        });
+                    }
+                }
+
+                // Render existing groups as overlays with actions
+                seg.groups.forEach(g=>{
+                    const rangeIdx = Array.from({length: g.end - g.start + 1}, (_,o)=>g.start + o);
+                    const rect = computeOverlayRect(rangeIdx, 4);
+                    if (!rect) return;
+                    const overlay = document.createElement('div');
+                    const isSel = state.selectedGroup && state.selectedGroup.segId===seg.id && state.selectedGroup.groupId===g.id;
+                    const isEditing = state.groupEdit && state.groupEdit.segId===seg.id && state.groupEdit.groupId===g.id;
+                    overlay.className = 'seg-overlay seg-overlay-group';
+                    if (isSel) overlay.classList.add('is-selected');
+                    if (isEditing) overlay.classList.add('is-editing');
+                    overlay.style.left = rect.left + 'px';
+                    overlay.style.top = rect.top + 'px';
+                    overlay.style.width = rect.width + 'px';
+                    overlay.style.height = rect.height + 'px';
+                    const bar = document.createElement('div');
+                    bar.className='seg-overlay-toolbar';
+                    bar.style.transition = 'opacity 0.15s ease';
+                    bar.innerHTML = `
+                        <button class="seg-dup-group bg-sky-600 hover:bg-sky-700 text-white text-xs px-2 py-1 rounded">Duplicate</button>
+                        <button class="seg-un-group bg-rose-600 hover:bg-rose-700 text-white text-xs px-2 py-1 rounded">Ungroup</button>
+                    `;
+                    overlay.appendChild(bar);
+                    drop.appendChild(overlay);
+                    if (!isEditing){
+                        bar.style.opacity = '0';
+                        overlay.addEventListener('mouseenter', ()=>{ bar.style.opacity='1'; });
+                        overlay.addEventListener('mouseleave', ()=>{ bar.style.opacity='0'; });
+                    } else {
+                        bar.style.display = 'none';
+                    }
+                    // drag whole group as a unit
+                    overlay.draggable = !isEditing;
+                    if (isEditing) overlay.style.pointerEvents = 'none';
+                    overlay.addEventListener('dragstart', (e)=>{
+                        if (state.groupEdit) { e.preventDefault(); return; }
+                        const payload = { segId: seg.id, groupId: g.id };
+                        e.dataTransfer.setData('application/x-group', JSON.stringify(payload));
+                        e.dataTransfer.setData('text/plain', 'group');
+                        e.dataTransfer.effectAllowed = 'move';
+                    });
+                    overlay.addEventListener('click',(e)=>{
+                        e.stopPropagation();
+                        state.selectedGroup = { segId: seg.id, groupId: g.id };
+                        renderSegments();
+                    });
+                    // actions
+                    bar.querySelector('.seg-dup-group').addEventListener('click',(e)=>{
+                        e.stopPropagation();
+                        const items = seg.chords.slice(g.start, g.end+1);
+                        const insertAt = g.end+1;
+                        seg.chords.splice(insertAt,0,...items);
+                        // create new group for duplicated
+                        const newG = { id: 'grp_'+(++state.groupIds), start: insertAt, end: insertAt+items.length-1 };
+                        seg.groups.push(newG);
+                        // shift following groups
+                        seg.groups.forEach(gg=>{
+                            if (gg===newG) return;
+                            if (gg.start>=insertAt){ gg.start += items.length; gg.end += items.length; }
+                        });
+                        state.selectedGroup = { segId: seg.id, groupId: newG.id };
+                        renderSegments();
+                    });
+                    bar.querySelector('.seg-un-group').addEventListener('click',(e)=>{
+                        e.stopPropagation();
+                        seg.groups = seg.groups.filter(gg=>gg.id!==g.id);
+                        if (state.groupEdit && state.groupEdit.groupId===g.id) state.groupEdit=null;
+                        if (state.selectedGroup && state.selectedGroup.groupId===g.id) state.selectedGroup=null;
+                        renderSegments();
+                    });
+                    // enter edit mode via double click
+                    overlay.addEventListener('dblclick', (e)=>{
+                        e.stopPropagation();
+                        state.groupEdit = { segId: seg.id, groupId: g.id };
+                        state.selectedGroup = { segId: seg.id, groupId: g.id };
+                        renderSegments();
+                    });
+                });
+
+                // Exit group edit by clicking outside
+                document.addEventListener('click', (ev)=>{
+                    if (!state.groupEdit) return;
+                    const ge = state.groupEdit;
+                    // If click inside this segment drop and within overlay, ignore
+                    if (drop.contains(ev.target)) return; // clicked outside this segment area
+                    exitGroupEdit();
+                }, { once: true });
+
+                // Clear selection when clicking empty area (not in edit mode)
+                drop.addEventListener('click', (e)=>{
+                    if (state.groupEdit) return;
+                    if (e.target === drop){
+                        seg.selection.indices.clear(); seg.selection.anchor=null; state.selectedGroup = null; renderSegments();
+                    }
+                });
+
                 // Header actions
                 box.querySelector('.seg-dup').addEventListener('click',()=>duplicateSegment(seg.id));
                 box.querySelector('.seg-del').addEventListener('click',()=>removeSegment(seg.id));
                 box.querySelector('.seg-name').addEventListener('change',e=>{ seg.name = e.target.value; });
-
-                list.appendChild(box);
             });
         }
 
@@ -1374,6 +1656,59 @@
             clearPlayIndicators();
         }
 
+        // Move a whole group to another position (or segment)
+        function moveGroupById(srcSegId, groupId, destSegId, destIndex){
+            const src = state.segments.find(s=>s.id===srcSegId); if(!src) return;
+            const g = src.groups.find(x=>x.id===groupId); if(!g) return;
+            const len = g.end - g.start + 1;
+            if (destIndex<0) destIndex=0;
+            // Same segment move
+            if (srcSegId === destSegId){
+                // Ignore drops inside the group
+                if (destIndex>=g.start && destIndex<=g.end+1) return;
+                const items = src.chords.splice(g.start, len);
+                // Adjust destIndex after removal
+                let insertAt = destIndex;
+                if (destIndex > g.end) insertAt = destIndex - len;
+                src.chords.splice(insertAt, 0, ...items);
+                // Compute oldStart/oldEnd before updating
+                const oldStart = g.start; const oldEnd = g.end;
+                // Update this group's range
+                const shift = insertAt - oldStart;
+                g.start = oldStart + shift; g.end = oldEnd + shift;
+                // Update other groups indices
+                src.groups.forEach(gg=>{
+                    if (gg.id===g.id) return;
+                    if (insertAt < oldStart){
+                        // moved backward; indices between insertAt..oldStart-1 shift right
+                        if (gg.start>=insertAt && gg.start<oldStart) { gg.start+=len; gg.end+=len; }
+                    } else {
+                        // moved forward; indices between oldEnd+1..insertAt-1 shift left
+                        if (gg.start>oldEnd && gg.start<insertAt) { gg.start-=len; gg.end-=len; }
+                    }
+                });
+                state.selectedGroup = { segId: src.id, groupId: g.id };
+                renderSegments();
+                return;
+            }
+            // Cross segment move
+            const dest = state.segments.find(s=>s.id===destSegId); if(!dest) return;
+            const items = src.chords.splice(g.start, len);
+            // Shift groups in source after removal
+            src.groups = src.groups.filter(gg=>gg.id!==g.id).map(gg=>{
+                if (gg.start>g.end){ gg.start-=len; gg.end-=len; }
+                return gg;
+            });
+            if (destIndex > dest.chords.length) destIndex = dest.chords.length;
+            dest.chords.splice(destIndex,0,...items);
+            const newG = { id: 'grp_'+(++state.groupIds), start: destIndex, end: destIndex+len-1 };
+            dest.groups.push(newG);
+            // Shift following groups in dest
+            dest.groups.forEach(gg=>{ if (gg!==newG && gg.start>=destIndex){ gg.start+=len; gg.end+=len; } });
+            state.selectedGroup = { segId: dest.id, groupId: newG.id };
+            renderSegments();
+        }
+
         // --- Wire up controls ---
         document.addEventListener('DOMContentLoaded', ()=>{
             renderPalette();
@@ -1385,7 +1720,7 @@
                 const name = prompt('ตั้งชื่อ Segment', 'New Segment') || 'New Segment';
                 addSegment(name);
             });
-            $('#seg-clear').addEventListener('click', ()=>{ state.segments=[]; renderSegments(); stopAll(); });
+            $('#seg-clear').addEventListener('click', ()=>{ state.segments=[]; state.selectedGroup=null; state.groupEdit=null; renderSegments(); stopAll(); });
             $('#seg-play').addEventListener('click', playAll);
             $('#seg-stop').addEventListener('click', stopAll);
             $('#seg-add-custom').addEventListener('click', ()=>{
@@ -1397,6 +1732,10 @@
                 el.addEventListener('dragstart',ev=>{ ev.dataTransfer.setData('text/plain', v); ev.dataTransfer.setData('application/x-chord-name', v); });
                 $('#seg-palette').appendChild(el);
                 $('#seg-custom-chord').value='';
+            });
+            // Escape to exit group edit
+            document.addEventListener('keydown',(e)=>{
+                if (e.key === 'Escape' && state.groupEdit){ exitGroupEdit(); }
             });
         });
     })();
