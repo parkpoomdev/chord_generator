@@ -995,6 +995,7 @@
                 if (card.dataset.chordName) {
                     // Allow dragging from Progression into Segment Composer
                     e.dataTransfer.setData('application/x-chord-name', card.dataset.chordName);
+                    e.dataTransfer.setData('application/x-chord', JSON.stringify({ name: card.dataset.chordName, bars: 1 }));
                 }
                 e.dataTransfer.effectAllowed = 'move';
                 card.classList.add('dragging');
@@ -1074,6 +1075,19 @@
         .seg-overlay-toolbar { position: absolute; top: -2.6rem; left: 50%; transform: translateX(-50%); display: flex; gap: 0.5rem; pointer-events: auto; z-index: 60; }
         .seg-overlay-toolbar button { pointer-events: auto; }
         .seg-overlay-toolbar-selection { top: auto; }
+        .seg-track { overflow-x: auto; padding-bottom: 0.5rem; }
+        .seg-track-inner { position: relative; display: flex; flex-direction: column; align-items: flex-start; gap: 0.3rem; min-width: 100%; }
+        .seg-ruler { display: flex; align-items: stretch; height: 34px; border: 1px solid #e2e8f0; border-bottom: none; border-radius: 12px 12px 0 0; background-color: #f8fafc; color: #475569; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.04em; }
+        .seg-ruler-bar { position: relative; display: flex; align-items: center; justify-content: center; }
+        .seg-ruler-bar::after { content: ''; position: absolute; right: 0; top: 18%; bottom: 18%; width: 1px; background-color: #cbd5e1; }
+        .seg-ruler-bar:last-child::after { display: none; }
+        .seg-drop { display: flex; align-items: stretch; position: relative; background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; min-height: 84px; padding: 0.75rem 0; }
+        .seg-drop::before { content: ''; position: absolute; inset: 0; border-radius: inherit; border: 2px dashed rgba(148, 163, 184, 0.35); pointer-events: none; opacity: 0; transition: opacity 0.2s ease; }
+        .seg-drop.is-empty::before { opacity: 1; }
+        .seg-drop-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-style: italic; font-size: 0.9rem; pointer-events: none; }
+        .seg-chord { border-right: 1px solid #e2e8f0; padding: 0.75rem 0.5rem; height: 100%; }
+        .seg-chord:last-child { border-right: none; }
+        .seg-chord .seg-duration-label { position: absolute; right: 0.5rem; bottom: 0.35rem; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; opacity: 0.75; text-transform: uppercase; }
     </style>
 
     <script>
@@ -1082,6 +1096,7 @@
         const NOTES = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
         const NAME_TO_SEMI = {C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
         const clamp = (n,min,max)=>Math.max(min,Math.min(max,n));
+        const BAR_UNIT_PX = 96;
 
         function parseChord(name){
             if(!name) return {root:"C", type:"maj", intervals:[0,4,7]};
@@ -1170,14 +1185,44 @@
 
         // --- App State ---
         const state = {
-            segments: [], // {id, name, chords:["C","Am",...], selection:{anchor:number|null, indices:Set}, groups:[{id,start,end}]}
+            segments: [], // {id, name, chords:[{id,name,bars}], selection:{anchor:number|null, indices:Set}, groups:[{id,start,end}]}
             playingTimers: [],
             engine: new AudioEngine(),
             ids: 0,
             groupIds: 0,
             groupEdit: null, // {segId, groupId}
-            selectedGroup: null // {segId, groupId}
+            selectedGroup: null, // {segId, groupId}
+            chordIds: 0
         };
+
+        const sanitizeBars = (value)=>{
+            const num = parseInt(value, 10);
+            return Number.isFinite(num) && num > 0 ? num : 1;
+        };
+
+        function makeChord(name, bars = 1){
+            return { id: 'ch_'+(++state.chordIds), name: name || '', bars: sanitizeBars(bars) };
+        }
+
+        function ensureChordObject(ch){
+            if (typeof ch === 'string') return makeChord(ch);
+            if (!ch || typeof ch !== 'object') return makeChord('');
+            if (!ch.id) ch.id = 'ch_'+(++state.chordIds);
+            ch.name = ch.name || '';
+            ch.bars = sanitizeBars(ch.bars);
+            return ch;
+        }
+
+        function cloneChord(ch){
+            const base = ensureChordObject(ch);
+            return makeChord(base.name, base.bars);
+        }
+
+        function chordFromInput(input){
+            if (typeof input === 'string') return makeChord(input);
+            if (input && typeof input === 'object') return makeChord(input.name, input.bars);
+            return makeChord('');
+        }
 
         // --- UI Rendering ---
         function renderPalette(){
@@ -1196,6 +1241,7 @@
                 el.addEventListener('dragstart',ev=>{
                     ev.dataTransfer.setData('text/plain', ch);
                     ev.dataTransfer.setData('application/x-chord-name', ch);
+                    ev.dataTransfer.setData('application/x-chord', JSON.stringify({ name: ch, bars: 1 }));
                 });
                 wrap.appendChild(el);
             });
@@ -1216,10 +1262,11 @@
             if(idx<0) return;
             const s = state.segments[idx];
             const copyGroups = s.groups.map(g=>({ id: 'grp_'+(++state.groupIds), start: g.start, end: g.end }));
+            const copyChords = s.chords.map(ch=>cloneChord(ch));
             const copy = {
                 id:'seg_'+(++state.ids),
                 name: s.name+' (copy)',
-                chords:[...s.chords],
+                chords: copyChords,
                 selection: { anchor: null, indices: new Set() },
                 groups: copyGroups
             };
@@ -1239,9 +1286,11 @@
             s.chords.splice(idx,1); renderSegments();
         }
 
-        function insertChord(segId, chord){
+        function insertChord(segId, chord, index=null){
             const s=state.segments.find(s=>s.id===segId); if(!s) return;
-            s.chords.push(chord);
+            const chordObj = chordFromInput(chord);
+            if (index===null || index<0 || index>=s.chords.length) s.chords.push(chordObj);
+            else s.chords.splice(index,0,chordObj);
             renderSegments();
         }
 
@@ -1260,6 +1309,7 @@
             list.innerHTML='';
             state.segments.forEach(seg=>{
                 normalizeGroups(seg);
+                seg.chords = seg.chords.map(ch=>ensureChordObject(ch));
                 if (!seg.selection){
                     seg.selection = { anchor: null, indices: new Set() };
                 } else {
@@ -1279,10 +1329,20 @@
                             <button class="seg-del text-xs bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded">Delete</button>
                         </div>
                     </div>
-                    <div class="seg-drop relative flex flex-wrap gap-2 min-h-[56px] p-2 border-2 border-dashed border-gray-300 rounded bg-white"></div>
+                    <div class="seg-track">
+                        <div class="seg-track-inner">
+                            <div class="seg-ruler"></div>
+                            <div class="seg-drop"></div>
+                        </div>
+                    </div>
                     `;
                 list.appendChild(box);
+                const track = box.querySelector('.seg-track');
+                const trackInner = box.querySelector('.seg-track-inner');
+                const ruler = box.querySelector('.seg-ruler');
                 const drop = box.querySelector('.seg-drop');
+                drop.innerHTML = '';
+                ruler.innerHTML = '';
                 const computeOverlayRect = (indices, pad=4)=>{
                     if (!indices.length) return null;
                     let minLeft=Infinity, maxRight=-Infinity, minTop=Infinity, maxBottom=-Infinity;
@@ -1303,16 +1363,45 @@
                         height: maxBottom - minTop + pad*2
                     };
                 };
+                const totalBarsRaw = seg.chords.reduce((sum,ch)=>sum + ch.bars, 0);
+                const totalBars = Math.max(totalBarsRaw, 1);
+                const trackWidth = totalBars * BAR_UNIT_PX;
+                const containerWidth = track ? track.clientWidth : 0;
+                const effectiveWidth = Math.max(trackWidth, containerWidth);
+                trackInner.style.minWidth = effectiveWidth + 'px';
+                trackInner.style.width = effectiveWidth + 'px';
+                ruler.style.width = trackWidth + 'px';
+                drop.style.width = trackWidth + 'px';
+                drop.style.minWidth = trackWidth + 'px';
+                for (let barIdx = 0; barIdx < totalBars; barIdx++){
+                    const barEl = document.createElement('div');
+                    barEl.className = 'seg-ruler-bar';
+                    barEl.style.flex = `0 0 ${BAR_UNIT_PX}px`;
+                    barEl.style.width = `${BAR_UNIT_PX}px`;
+                    barEl.textContent = `Bar ${barIdx + 1}`;
+                    ruler.appendChild(barEl);
+                }
                 // Populate chords
                 seg.chords.forEach((ch,i)=>{
+                    const chordWidth = ch.bars * BAR_UNIT_PX;
                     const c = document.createElement('div');
-                    c.className='group seg-chord relative inline-flex items-center justify-center px-3 py-2 rounded-md bg-indigo-600 text-white shadow cursor-grab';
-                    c.draggable=true; c.dataset.chord=ch; c.dataset.idx=i;
-                    c.innerHTML = `<span>${ch}</span>
+                    c.className='group seg-chord relative flex flex-col items-center justify-center rounded-md bg-indigo-600 text-white shadow cursor-grab select-none';
+                    c.draggable=true;
+                    c.dataset.chord = ch.name;
+                    c.dataset.idx = i;
+                    c.dataset.id = ch.id;
+                    c.dataset.bars = String(ch.bars);
+                    c.style.flex = `0 0 ${chordWidth}px`;
+                    c.style.width = `${chordWidth}px`;
+                    c.style.minWidth = `${chordWidth}px`;
+                    c.innerHTML = `
+                        <span class="text-lg font-semibold tracking-tight">${ch.name || '--'}</span>
+                        <span class="seg-duration-label">${ch.bars} ${ch.bars > 1 ? 'bars' : 'bar'}</span>
                         <div class="absolute -top-2 -right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition">
                             <button class="seg-ch-copy bg-indigo-500 text-white text-[10px] px-1.5 py-0.5 rounded">⧉</button>
                             <button class="seg-ch-del bg-rose-500 text-white text-[10px] px-1.5 py-0.5 rounded">×</button>
-                        </div>`;
+                        </div>
+                    `;
                     // Selection visual
                     if (seg.selection.indices.has(i)) {
                         c.classList.add('ring-2','ring-amber-400');
@@ -1329,14 +1418,17 @@
                     }
                     // chord drag
                     c.addEventListener('dragstart',ev=>{
-                        ev.dataTransfer.setData('text/plain', ch);
+                        ev.dataTransfer.setData('text/plain', ch.name);
                         ev.dataTransfer.setData('application/x-seg-id', seg.id);
                         ev.dataTransfer.setData('application/x-seg-idx', String(i));
+                        ev.dataTransfer.setData('application/x-chord-name', ch.name);
+                        ev.dataTransfer.setData('application/x-chord', JSON.stringify({ name: ch.name, bars: ch.bars }));
                     });
                     // chord dragover/drop to allow reordering (swap/insert)
                     c.addEventListener('dragover', ev => { ev.preventDefault(); });
                     c.addEventListener('drop', ev => {
                         ev.preventDefault();
+                        ev.stopPropagation();
                         // Restrict when editing a group
                         if (state.groupEdit){
                             const ge = state.groupEdit; if (ge.segId !== seg.id) return;
@@ -1349,6 +1441,11 @@
 
                         const srcSegId = ev.dataTransfer.getData('application/x-seg-id');
                         const srcIdxStr = ev.dataTransfer.getData('application/x-seg-idx');
+                        const chordPayload = ev.dataTransfer.getData('application/x-chord');
+                        let chordData = null;
+                        if (chordPayload) {
+                            try { chordData = JSON.parse(chordPayload); } catch(err) { chordData = null; }
+                        }
                         const chordName = ev.dataTransfer.getData('application/x-chord-name') || ev.dataTransfer.getData('text/plain');
 
                         if (srcSegId && srcIdxStr !== '') {
@@ -1387,14 +1484,25 @@
                                 });
                             }
                             renderSegments();
-                        } else if (chordName) {
+                        } else if (chordData || chordName) {
                             const target = state.segments.find(s=>s.id===seg.id);
                             if (state.groupEdit){
                                 const ge = state.groupEdit; const g = target.groups.find(g=>g.id===ge.groupId); if (!g) return;
                                 if (destIndex<g.start) destIndex = g.start;
                                 if (destIndex>g.end+1) destIndex = g.end+1;
                             }
-                            target.chords.splice(destIndex,0,chordName);
+                            insertChord(seg.id, chordData || chordName, destIndex);
+                        }
+                    });
+                    // Edit bars via double click
+                    c.addEventListener('dblclick', ev => {
+                        if (state.groupEdit) return;
+                        ev.stopPropagation();
+                        const input = prompt('จำนวนบาร์สำหรับคอร์ดนี้', ch.bars);
+                        if (input === null) return;
+                        const newBars = sanitizeBars(input);
+                        if (newBars !== ch.bars){
+                            ch.bars = newBars;
                             renderSegments();
                         }
                     });
@@ -1421,10 +1529,23 @@
                     drop.appendChild(c);
                 });
 
+                if (seg.chords.length === 0){
+                    drop.classList.add('is-empty');
+                    const placeholder = document.createElement('div');
+                    placeholder.className = 'seg-drop-placeholder';
+                    placeholder.textContent = 'ลากคอร์ดจากด้านบนหรือ Progression มาวางที่นี่';
+                    drop.appendChild(placeholder);
+                    seg.selection.indices.clear();
+                    seg.selection.anchor = null;
+                } else {
+                    drop.classList.remove('is-empty');
+                }
+
                 // Drop handling (append or move to end)
                 drop.addEventListener('dragover',ev=>ev.preventDefault());
                 drop.addEventListener('drop',ev=>{
                     ev.preventDefault();
+                    ev.stopPropagation();
                     if (state.groupEdit){
                         // Disallow dropping at container level during group edit
                         return;
@@ -1449,18 +1570,28 @@
                     }
                     const srcSegId = ev.dataTransfer.getData('application/x-seg-id');
                     const srcIdxStr = ev.dataTransfer.getData('application/x-seg-idx');
+                    const destIndex = computeIndexFromX(ev.clientX);
                     if (srcSegId && srcIdxStr !== '') {
                         const source = state.segments.find(s=>s.id===srcSegId);
                         const target = state.segments.find(s=>s.id===seg.id);
                         if (!source || !target) return;
                         const srcIndex = parseInt(srcIdxStr,10);
                         const [moved] = source.chords.splice(srcIndex,1);
-                        target.chords.push(moved);
+                        let adjustedIndex = destIndex;
+                        if (source.id === target.id && srcIndex < destIndex) adjustedIndex -= 1;
+                        if (adjustedIndex < 0) adjustedIndex = 0;
+                        if (adjustedIndex > target.chords.length) adjustedIndex = target.chords.length;
+                        target.chords.splice(adjustedIndex,0,moved);
                         renderSegments();
                         return;
                     }
-                    const chord = ev.dataTransfer.getData('application/x-chord-name') || ev.dataTransfer.getData('text/plain');
-                    if(chord) insertChord(seg.id, chord);
+                    const chordPayload = ev.dataTransfer.getData('application/x-chord');
+                    let chordData = null;
+                    if (chordPayload) {
+                        try { chordData = JSON.parse(chordPayload); } catch(err) { chordData = null; }
+                    }
+                    const chordName = ev.dataTransfer.getData('application/x-chord-name') || ev.dataTransfer.getData('text/plain');
+                    if (chordData || chordName) insertChord(seg.id, chordData || chordName, destIndex);
                 });
 
                 // Selection toolbar: show when there is a contiguous selection >=2
@@ -1545,7 +1676,7 @@
                     // actions
                     bar.querySelector('.seg-dup-group').addEventListener('click',(e)=>{
                         e.stopPropagation();
-                        const items = seg.chords.slice(g.start, g.end+1);
+                        const items = seg.chords.slice(g.start, g.end+1).map(ch=>cloneChord(ch));
                         const insertAt = g.end+1;
                         seg.chords.splice(insertAt,0,...items);
                         // create new group for duplicated
@@ -1616,13 +1747,15 @@
 
             // Schedule chords per segment
             state.segments.forEach(seg=>{
-                seg.chords.forEach((name, idx)=>{
-                    const chord = parseChord(name);
-                    const midi = chordToMidiNotes(chord);
-                    state.engine.playChord(midi, t, bar * 1.0);
+                seg.chords.forEach((ch, idx)=>{
+                    const chordShape = parseChord(ch.name);
+                    const midi = chordToMidiNotes(chordShape);
+                    const chordBars = ch.bars || 1;
+                    const chordDuration = bar * chordBars;
+                    state.engine.playChord(midi, t, chordDuration);
                     // UI indicator
                     const markerDelay = (t - ctx.currentTime) * 1000;
-                    const clearDelay  = ((t + bar) - ctx.currentTime) * 1000;
+                    const clearDelay  = ((t + chordDuration) - ctx.currentTime) * 1000;
                     const cardEl = Array.from($('#seg-list').querySelectorAll('.seg-segment'))
                         .find(el=>el.dataset.id===seg.id)
                         ?.querySelectorAll('.seg-chord')[idx];
@@ -1631,8 +1764,8 @@
                         const offTimer = setTimeout(()=>{ cardEl.classList.remove('playing'); }, clearDelay);
                         state.playingTimers.push(onTimer, offTimer);
                     }
-                    t += bar;
-                    elapsedBars++;
+                    t += chordDuration;
+                    elapsedBars += chordBars;
                 });
             });
 
@@ -1729,7 +1862,11 @@
                 const el=document.createElement('div');
                 el.className='seg-chord inline-flex items-center justify-center px-3 py-2 rounded-md bg-indigo-600 text-white shadow cursor-grab select-none';
                 el.textContent=v; el.draggable=true; el.dataset.chord=v;
-                el.addEventListener('dragstart',ev=>{ ev.dataTransfer.setData('text/plain', v); ev.dataTransfer.setData('application/x-chord-name', v); });
+                el.addEventListener('dragstart',ev=>{
+                    ev.dataTransfer.setData('text/plain', v);
+                    ev.dataTransfer.setData('application/x-chord-name', v);
+                    ev.dataTransfer.setData('application/x-chord', JSON.stringify({ name: v, bars: 1 }));
+                });
                 $('#seg-palette').appendChild(el);
                 $('#seg-custom-chord').value='';
             });
