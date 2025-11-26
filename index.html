@@ -1259,10 +1259,14 @@
         .seg-ruler-bar { position: relative; display: flex; align-items: center; justify-content: center; }
         .seg-ruler-bar::after { content: ''; position: absolute; right: 0; top: 18%; bottom: 18%; width: 1px; background-color: #cbd5e1; }
         .seg-ruler-bar:last-child::after { display: none; }
-        .seg-drop { display: flex; align-items: stretch; position: relative; background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; min-height: 84px; padding: 0.75rem 0; }
+        .seg-drop-wrapper { display: flex; align-items: center; gap: 0.5rem; }
+        .seg-drop { flex: 1; display: flex; align-items: stretch; position: relative; background-color: #ffffff; border: 1px solid #e2e8f0; border-top: none; border-radius: 0 0 12px 12px; min-height: 84px; padding: 0.75rem 0; }
         .seg-drop::before { content: ''; position: absolute; inset: 0; border-radius: inherit; border: 2px dashed rgba(148, 163, 184, 0.35); pointer-events: none; opacity: 0; transition: opacity 0.2s ease; }
         .seg-drop.is-empty::before { opacity: 1; }
-        .seg-drop-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-style: italic; font-size: 0.9rem; pointer-events: none; }
+        .seg-drop-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #94a3b8; font-size: 0; pointer-events: none; border: 2px dashed rgba(148, 163, 184, 0.6); border-radius: 12px; }
+        .seg-drop-placeholder__plus { display: block; font-size: 2.5rem; font-weight: 600; line-height: 1; color: rgba(148, 163, 184, 0.85); }
+        .seg-drop-helper { flex: 0 0 96px; width: 96px; margin: 0 0.35rem 0 0; border: 2px dashed rgba(148, 163, 184, 0.9); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; color: rgba(148, 163, 184, 0.9); background: rgba(255, 255, 255, 0.9); cursor: pointer; pointer-events: auto; transition: border-color 0.2s ease, color 0.2s ease, opacity 0.2s ease; height: 84px; }
+        .seg-drop-helper.is-active { border-color: rgba(99, 102, 241, 0.85); color: #312e81; opacity: 1; }
         .seg-chord { border-right: 1px solid #e2e8f0; padding: 0.75rem 0.5rem; height: 100%; }
         .seg-chord:last-child { border-right: none; }
         .seg-chord .seg-duration-label { position: absolute; right: 0.5rem; bottom: 0.35rem; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; opacity: 0.75; text-transform: uppercase; }
@@ -1619,6 +1623,10 @@
                 const drop = box.querySelector('.seg-drop');
                 drop.innerHTML = '';
                 ruler.innerHTML = '';
+                const dropWrapper = document.createElement('div');
+                dropWrapper.className = 'seg-drop-wrapper';
+                drop.parentNode.insertBefore(dropWrapper, drop);
+                dropWrapper.appendChild(drop);
                 const computeOverlayRect = (indices, pad=4)=>{
                     if (!indices.length) return null;
                     let minLeft=Infinity, maxRight=-Infinity, minTop=Infinity, maxBottom=-Infinity;
@@ -1808,12 +1816,51 @@
                     drop.classList.add('is-empty');
                     const placeholder = document.createElement('div');
                     placeholder.className = 'seg-drop-placeholder';
-                    placeholder.textContent = 'ลากคอร์ดจากด้านบนหรือ Progression มาวางที่นี่';
+                    placeholder.innerHTML = '<span class="seg-drop-placeholder__plus">+</span>';
                     drop.appendChild(placeholder);
                     seg.selection.indices.clear();
                     seg.selection.anchor = null;
                 } else {
                     drop.classList.remove('is-empty');
+                }
+
+                const readIncomingChordValue = (dataTransfer) => {
+                    const chordPayload = dataTransfer.getData('application/x-chord');
+                    if (chordPayload) {
+                        try { return JSON.parse(chordPayload); } catch(err) { /* ignore */ }
+                    }
+                    const chordName = dataTransfer.getData('application/x-chord-name') || dataTransfer.getData('text/plain');
+                    if (chordName) return chordName;
+                    return null;
+                };
+
+                const insertIncomingChord = (dataTransfer, destIndex) => {
+                    const chordValue = readIncomingChordValue(dataTransfer);
+                    if (!chordValue) return false;
+                    insertChord(seg.id, chordValue, destIndex);
+                    return true;
+                };
+
+                let dropHelper = null;
+                if (seg.chords.length){
+                    dropHelper = document.createElement('div');
+                    dropHelper.className = 'seg-drop-helper';
+                    dropHelper.textContent = '+';
+                    dropWrapper.appendChild(dropHelper);
+                    dropHelper.addEventListener('dragover', ev=>{
+                        ev.preventDefault();
+                        dropHelper.classList.add('is-active');
+                    });
+                    dropHelper.addEventListener('dragleave', ()=>{
+                        dropHelper.classList.remove('is-active');
+                    });
+                    dropHelper.addEventListener('drop', ev=>{
+                        ev.preventDefault();
+                        ev.stopPropagation();
+                        dropHelper.classList.remove('is-active');
+                        if (state.groupEdit) return;
+                        insertIncomingChord(ev.dataTransfer, seg.chords.length);
+                    });
                 }
 
                 // Drop handling (append or move to end)
@@ -1860,13 +1907,7 @@
                         renderSegments();
                         return;
                     }
-                    const chordPayload = ev.dataTransfer.getData('application/x-chord');
-                    let chordData = null;
-                    if (chordPayload) {
-                        try { chordData = JSON.parse(chordPayload); } catch(err) { chordData = null; }
-                    }
-                    const chordName = ev.dataTransfer.getData('application/x-chord-name') || ev.dataTransfer.getData('text/plain');
-                    if (chordData || chordName) insertChord(seg.id, chordData || chordName, destIndex);
+                    if (insertIncomingChord(ev.dataTransfer, destIndex)) return;
                 });
 
                 // Selection toolbar: show when there is a contiguous selection >=2
