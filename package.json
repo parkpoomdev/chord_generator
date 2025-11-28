@@ -1,0 +1,12 @@
+{
+  "name": "chord-generator",
+  "version": "1.0.0",
+  "description": "Static chord generator UI served through Express for reliable Tone.js piano playback",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}

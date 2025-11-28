@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>24-Fret Fretboard Chord Suggester</title>
     <!-- Load Tailwind CSS --><script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tone@14.8.45/build/Tone.min.js"></script>
     <!-- Configure Tailwind for custom colors and font --><script>
         tailwind.config = {
             theme: {
@@ -239,6 +240,122 @@
         .remove-button:hover {
             background-color: #dc2626; /* Red-600 */
         }
+        .palette-table {
+            margin-top: 0.5rem;
+            border: 1px solid rgba(15, 23, 42, 0.12);
+            border-radius: 1rem;
+            background-color: #ffffff;
+            box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
+            overflow: hidden;
+        }
+        .palette-table-head {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 1rem;
+            background: #f8fafc;
+            font-size: 0.85rem;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: #475569;
+            border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+        }
+        .palette-table-head-note {
+            font-size: 0.7rem;
+            letter-spacing: normal;
+            text-transform: none;
+            color: #64748b;
+        }
+        .palette-table-grid {
+            display: flex;
+            flex-wrap: nowrap;
+            gap: 0.5rem;
+            padding: 0.75rem;
+            background-color: transparent;
+            width: 100%;
+            overflow-x: auto;
+        }
+        .root-card {
+            padding: 0.75rem;
+            border-radius: 1rem;
+            border: 1px solid rgba(15, 23, 42, 0.08);
+            background-color: #ffffff;
+            box-shadow: 0 6px 14px rgba(15, 23, 42, 0.07);
+            display: flex;
+            flex-direction: column;
+            gap: 0.55rem;
+            min-width: 260px;
+            flex: 0 0 auto;
+        }
+        .root-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .root-letter {
+            font-weight: 700;
+            font-size: 1.2rem;
+        }
+        .root-card-controls {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+            gap: 0.4rem;
+        }
+        .root-type-select,
+        .root-bass-select {
+            border-radius: 999px;
+            height: 2.4rem;
+            padding: 0 0.8rem;
+            border: 1px solid rgba(15, 23, 42, 0.15);
+            background-color: #f8fafc;
+            font-weight: 600;
+        }
+        .root-card-actions {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.5rem;
+        }
+        .root-preview-button {
+            border-radius: 999px;
+            background-color: #4c1d95;
+            color: white;
+            border: none;
+            padding: 0.4rem 1rem;
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .root-preview-button:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 6px rgba(15, 23, 42, 0.15);
+        }
+        .root-chip {
+            padding: 0.35rem 0.6rem;
+            border-radius: 0.9rem;
+            border: 1px solid rgba(15, 23, 42, 0.1);
+            background-color: rgba(248, 250, 252, 0.8);
+            font-weight: 600;
+            font-size: 0.9rem;
+            text-align: center;
+            cursor: grab;
+            flex: 1;
+        }
+        .root-chip:active {
+            transform: scale(0.95);
+        }
+        @media (max-width: 980px) {
+            .palette-table-grid {
+                grid-template-columns: repeat(2, minmax(220px, 1fr));
+            }
+        }
+        @media (max-width: 640px) {
+            .palette-table-grid {
+                grid-template-columns: 1fr;
+            }
+        }
         /* Ensure mini fretboard SVGs are properly sized */
         .mini-fretboard-cell {
             width: 80px;
@@ -354,10 +471,6 @@
                     <input id="seg-metronome" type="checkbox" class="rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
                     <span class="text-sm text-gray-700">Metronome</span>
                 </label>
-                <div class="ml-auto flex items-center gap-2">
-                    <button id="seg-play" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg">Preview</button>
-                    <button id="seg-stop" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg">Stop</button>
-                </div>
             </div>
 
             <!-- Chord Palette -->
@@ -369,7 +482,13 @@
                         <button id="seg-add-custom" class="bg-teal-600 hover:bg-teal-700 text-white font-semibold py-2 px-3 rounded-md">Add</button>
                     </div>
                 </div>
-                <div id="seg-palette" class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 lg:grid-cols-8 gap-2"></div>
+                <div class="palette-table">
+                    <div class="palette-table-head">
+                        <span>Chord</span>
+                        <span class="palette-table-head-note">Drag into progression</span>
+                    </div>
+                    <div id="seg-palette" class="palette-table-grid" aria-label="Chord palette grid"></div>
+                </div>
                 <p class="text-xs text-gray-500 mt-1">ลากคอร์ดจาก Palette ไปวางใน Segment ด้านล่าง</p>
             </div>
 
@@ -377,6 +496,8 @@
             <div class="flex items-center justify-between mb-2">
                 <h3 class="text-lg font-semibold text-primary-dark">Segments</h3>
                 <div class="flex items-center gap-2">
+                    <button id="seg-preview" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg">Preview</button>
+                    <button id="seg-stop" class="bg-gray-600 hover:bg-gray-700 text-white font-semibold py-2 px-4 rounded-lg">Stop</button>
                     <button id="seg-add" class="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold py-2 px-4 rounded-lg">+ Add Segment</button>
                     <button id="seg-clear" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-2 px-4 rounded-lg">Clear All</button>
                 </div>
@@ -466,30 +587,83 @@
             return audioState.ctx;
         }
 
-        function playChordAudio(notes, instrument = 'piano', duration = 1.2) {
+        const tonePianoSampler = new Tone.Sampler({
+            urls: {
+                C1: 'C1.mp3',
+                A1: 'A1.mp3',
+                C2: 'C2.mp3',
+                A2: 'A2.mp3',
+                C3: 'C3.mp3',
+                A3: 'A3.mp3',
+                C4: 'C4.mp3',
+            },
+            release: 1.4,
+            baseUrl: './assets/audio/salamander/',
+        }).toDestination();
+        let tonePianoReady = false;
+        if (tonePianoSampler.loaded instanceof Promise) {
+            tonePianoSampler.loaded.then(() => {
+                tonePianoReady = true;
+            });
+        } else {
+            tonePianoReady = true;
+        }
+
+        function playChordAudio(notes, instrument = 'piano', duration = 1.2, when = null) {
+            const midiResolver = (note) => {
+                if (typeof note === 'number') return note;
+                if (note && typeof note === 'object') {
+                    if (typeof note.fret === 'number' && typeof note.string === 'number') {
+                        const midiBase = OPEN_STRING_MIDI[note.string] ?? OPEN_STRING_MIDI[0];
+                        return midiBase + note.fret;
+                    }
+                    if (typeof note.midi === 'number') return note.midi;
+                    if (typeof note.pitch === 'number') return 60 + note.pitch;
+                }
+                return OPEN_STRING_MIDI[0];
+            };
+            const midiList = Array.isArray(notes) ? notes.map(midiResolver).filter(n => typeof n === 'number') : [];
+            if (instrument === 'piano' && window.Tone && tonePianoReady && midiList.length) {
+                Tone.start().then(() => {
+                    const playTime = typeof when === 'number' ? when : Tone.now();
+                    midiList.forEach(midi => {
+                        const noteName = Tone.Frequency(midi, 'midi').toNote();
+                        tonePianoSampler.triggerAttackRelease(noteName, duration, playTime, 0.9);
+                    });
+                }).catch(() => {
+                    fallbackOscillator(midiList, duration, instrument, when);
+                });
+                return;
+            }
+            fallbackOscillator(midiList, duration, instrument, when);
+        }
+
+        function fallbackOscillator(midiList, duration, instrument, when) {
+            if (!midiList.length) return;
             const ctx = ensureAudioContext();
             const t0 = ctx.currentTime + 0.02;
+            const startTime = typeof when === 'number' ? Math.max(when, t0) : t0;
             const gain = ctx.createGain();
-            gain.gain.setValueAtTime(0.0001, t0);
+            gain.gain.setValueAtTime(0.0001, startTime);
             gain.connect(ctx.destination);
-            gain.gain.exponentialRampToValueAtTime(0.25, t0 + 0.08);
-            gain.gain.exponentialRampToValueAtTime(0.0001, t0 + duration);
+            gain.gain.exponentialRampToValueAtTime(0.25, startTime + 0.08);
+            gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
             const oscType = instrument === 'guitar' ? 'triangle' : 'sine';
             const usedMidis = new Set();
-            notes.forEach(note => {
-                const midiBase = OPEN_STRING_MIDI[note.string] ?? OPEN_STRING_MIDI[0];
-                const midi = midiBase + note.fret;
+            midiList.forEach(midi => {
                 if (usedMidis.has(midi)) return;
                 usedMidis.add(midi);
                 const freq = 440 * Math.pow(2, (midi - 69) / 12);
                 const osc = ctx.createOscillator();
                 osc.type = oscType;
-                osc.frequency.setValueAtTime(freq, t0);
+                osc.frequency.setValueAtTime(freq, startTime);
                 osc.connect(gain);
-                osc.start(t0);
-                osc.stop(t0 + duration + 0.1);
+                osc.start(startTime);
+                osc.stop(startTime + duration + 0.1);
             });
         }
+
+        window.playChordAudio = playChordAudio;
 
         // --- Main Application Class ---
         class FretboardApp {
@@ -653,12 +827,13 @@
 
                 const openStringGuidance = document.createElement('div');
                 openStringGuidance.className = 'open-string-column';
+                const openStringNames = STANDARD_TUNING.map((pitch) => NOTES[pitch % NOTES.length]);
                 openStringGuidance.innerHTML = `
                     <div class="open-string-header">
                         <div>Fret 0</div>
-                        <div>???????</div>
+                        <div>Open strings</div>
                     </div>
-                    <div class="open-string-row">GF#F || E ? Fret 0 Here</div>
+                    <div class="open-string-row">Standard tuning: ${openStringNames.join(' · ')}</div>
                 `;
                 STANDARD_TUNING.forEach((pitch, idx) => {
                     const label = document.createElement('div');
@@ -1139,7 +1314,7 @@
                         </button>
                         <div class="flex w-full items-center justify-between mb-2">
                             <span class="text-xs font-semibold opacity-70">${index + 1}. Fret ${cardData.rootFret}</span>
-                            <button class="action-button preview-card text-[0.65rem] px-3 py-1" data-instrument="guitar">Preview</button>
+                            <button class="action-button preview-card text-[0.65rem] px-3 py-1" data-instrument="piano">Preview</button>
                         </div>
                         <div class="text-2xl font-black">${cardData.chordName}</div>
                         <div class="mt-2 h-10 w-full flex items-center justify-center">
@@ -1157,7 +1332,7 @@
                     if (previewBtn) {
                         previewBtn.addEventListener('click', (e) => {
                             e.stopPropagation();
-                            playChordAudio(cardData.notes, previewBtn.dataset.instrument || 'guitar');
+                            playChordAudio(cardData.notes, previewBtn.dataset.instrument || 'piano');
                         });
                     }
                 });
@@ -1267,6 +1442,17 @@
         .seg-drop-placeholder__plus { display: block; font-size: 2.5rem; font-weight: 600; line-height: 1; color: rgba(148, 163, 184, 0.85); }
         .seg-drop-helper { flex: 0 0 96px; width: 96px; margin: 0 0.35rem 0 0; border: 2px dashed rgba(148, 163, 184, 0.9); border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; color: rgba(148, 163, 184, 0.9); background: rgba(255, 255, 255, 0.9); cursor: pointer; pointer-events: auto; transition: border-color 0.2s ease, color 0.2s ease, opacity 0.2s ease; height: 84px; }
         .seg-drop-helper.is-active { border-color: rgba(99, 102, 241, 0.85); color: #312e81; opacity: 1; }
+        .seg-preview {
+            border-radius: 0.5rem;
+            border: none;
+            font-weight: 600;
+            padding: 0.35rem 0.75rem;
+            color: #0f172a;
+            background-color: #bef264;
+        }
+        .seg-preview:hover {
+            background-color: #86efac;
+        }
         .seg-chord { border-right: 1px solid #e2e8f0; padding: 0.75rem 0.5rem; height: 100%; }
         .seg-chord:last-child { border-right: none; }
         .seg-chord .seg-duration-label { position: absolute; right: 0.5rem; bottom: 0.35rem; font-size: 0.65rem; font-weight: 600; letter-spacing: 0.04em; opacity: 0.75; text-transform: uppercase; }
@@ -1281,24 +1467,40 @@
         const BAR_UNIT_PX = 96;
 
         function parseChord(name){
-            if(!name) return {root:"C", type:"maj", intervals:[0,4,7]};
-            name = name.trim();
+            if(!name) return {root:"C", type:"maj", intervals:[0,4,7], bass:null};
+            let clean = name.trim();
+            let bassPart = null;
+            const slashIdx = clean.indexOf('/');
+            if (slashIdx >= 0){
+                bassPart = clean.slice(slashIdx + 1).trim();
+                clean = clean.slice(0, slashIdx);
+            }
             // Extract root (A-G with optional #/b)
-            const m = name.match(/^([A-G](?:#|b)?)(.*)$/i);
-            if(!m) return {root:"C", type:"maj", intervals:[0,4,7]};
-            const root = m[1].toUpperCase().replace('B#','C').replace('E#','F');
-            const qual = (m[2]||'').trim().toLowerCase();
+            const m = clean.match(/^([A-G](?:#|b)?)(.*)$/i);
+            if(!m) return {root:"C", type:"maj", intervals:[0,4,7], bass:null};
+            let root = m[1].toUpperCase().replace('B#','C').replace('E#','F');
+            if (!NAME_TO_SEMI[root]) root = root.charAt(0);
+            let qual = (m[2]||'').trim().toLowerCase();
             // Map quality to intervals
             let type = 'maj', iv=[0,4,7];
+            const isMajor7 = qual.includes('maj7') || qual.includes('maj 7');
             if(qual === 'm' || qual.startsWith('min')) { type='min'; iv=[0,3,7]; }
             else if(qual.startsWith('dim')) { type='dim'; iv=[0,3,6]; }
             else if(qual.startsWith('aug') || qual.includes('+')) { type='aug'; iv=[0,4,8]; }
-            else if(qual === '7' || qual.endsWith('7') && !qual.includes('maj')) { type='7'; iv=[0,4,7,10]; }
-            else if(qual.includes('maj7')) { type='maj7'; iv=[0,4,7,11]; }
+            else if(qual === '7' || (qual.endsWith('7') && !qual.includes('maj'))) { type='7'; iv=[0,4,7,10]; }
+            else if(isMajor7) { type='maj7'; iv=[0,4,7,11]; }
             else if(qual.includes('m7')) { type='m7'; iv=[0,3,7,10]; }
-            return {root,type,intervals:iv};
+            let bass = null;
+            if (bassPart){
+                const normalizedBass = bassPart.toUpperCase().replace('B#','C').replace('E#','F');
+                if (NAME_TO_SEMI[normalizedBass]) {
+                    bass = normalizedBass;
+                }
+            }
+            return {root,type,intervals:iv,bass};
         }
 
+        const BASS_BASE = 36;
         function chordToMidiNotes(chord){
             const semi = NAME_TO_SEMI[chord.root] ?? 0;
             // Voice near C3..B3
@@ -1309,6 +1511,13 @@
             while(notes[notes.length-1] < 60) {
                 for(let i=0;i<notes.length;i++) notes[i]+=12;
                 if(notes[notes.length-1]>=60) break;
+            }
+            if (chord.bass){
+                const bassSemi = NAME_TO_SEMI[chord.bass] ?? NAME_TO_SEMI[chord.root];
+                const bassMidi = BASS_BASE + bassSemi;
+                if (!notes.includes(bassMidi)){
+                    notes.unshift(bassMidi);
+                }
             }
             return notes;
         }
@@ -1506,24 +1715,108 @@
 
         // --- UI Rendering ---
         function renderPalette(){
-            const rootMaj = NOTES.map(n=>n);
-            const rootMin = NOTES.map(n=>n+"m");
-            const extras = ['maj7','m7','7'].flatMap(q=>['C','D','E','F','G','A','B'].map(n=>n+q)).slice(0,7);
-            const items = [...rootMaj, ...rootMin, ...extras];
+            const roots = ['C','D','E','F','G','A','B'];
+            const chordTypes = [
+                { value: '', label: 'Root' },
+                { value: 'maj', label: 'Major' },
+                { value: 'm', label: 'Minor' },
+                { value: '7', label: '7' },
+                { value: 'm7', label: 'm7' },
+                { value: 'maj7', label: 'Maj7' },
+                { value: 'sus4', label: 'Sus4' },
+            ];
+            const slashOptions = ['', ...NOTES];
             const wrap = $('#seg-palette');
             wrap.innerHTML='';
-            items.forEach(ch=>{
-                const el=document.createElement('div');
-                el.className='seg-chord inline-flex items-center justify-center px-3 py-2 rounded-md bg-indigo-600 text-white shadow cursor-grab select-none';
-                el.textContent=ch;
-                el.draggable=true;
-                el.dataset.chord=ch;
-                el.addEventListener('dragstart',ev=>{
-                    ev.dataTransfer.setData('text/plain', ch);
-                    ev.dataTransfer.setData('application/x-chord-name', ch);
-                    ev.dataTransfer.setData('application/x-chord', JSON.stringify({ name: ch, bars: 1 }));
+
+            const composeChordName = (root, type, bass) => {
+                let name = root + (type || '');
+                if (bass) {
+                    name += `/${bass}`;
+                }
+                return name;
+            };
+
+            roots.forEach(root => {
+                const card = document.createElement('div');
+                card.className = 'root-card';
+
+                const header = document.createElement('div');
+                header.className = 'root-card-header';
+
+                const letter = document.createElement('div');
+                letter.className = 'root-letter';
+                letter.textContent = root;
+
+                const preview = document.createElement('button');
+                preview.className = 'root-preview-button';
+                preview.type = 'button';
+                preview.textContent = 'Preview';
+
+                header.appendChild(letter);
+                header.appendChild(preview);
+
+                const typeSelect = document.createElement('select');
+                typeSelect.className = 'root-type-select';
+                chordTypes.forEach(type => {
+                    const option = document.createElement('option');
+                    option.value = type.value;
+                    option.textContent = type.label;
+                    typeSelect.appendChild(option);
                 });
-                wrap.appendChild(el);
+
+                const bassSelect = document.createElement('select');
+                bassSelect.className = 'root-bass-select';
+                slashOptions.forEach(bass => {
+                    const option = document.createElement('option');
+                    option.value = bass;
+                    option.textContent = bass ? `/${bass}` : 'Root bass';
+                    bassSelect.appendChild(option);
+                });
+
+                const chip = document.createElement('div');
+                chip.className = 'root-chip';
+                chip.setAttribute('draggable', 'true');
+
+                const updateChip = () => {
+                    const chordName = composeChordName(root, typeSelect.value, bassSelect.value);
+                    chip.textContent = chordName;
+                    chip.dataset.chordName = chordName;
+                    chip.dataset.bass = bassSelect.value;
+                    chip.title = `Drag to add ${chordName}`;
+                };
+
+                typeSelect.addEventListener('change', updateChip);
+                bassSelect.addEventListener('change', updateChip);
+
+                chip.addEventListener('dragstart', ev => {
+                    const chordName = chip.dataset.chordName || composeChordName(root, '', '');
+                    ev.dataTransfer.setData('text/plain', chordName);
+                    ev.dataTransfer.setData('application/x-chord-name', chordName);
+                    ev.dataTransfer.setData('application/x-chord', JSON.stringify({ name: chordName, bars: 1 }));
+                });
+
+                preview.addEventListener('click', () => {
+                    const chordName = chip.dataset.chordName || composeChordName(root, '', '');
+                    const parsed = parseChord(chordName);
+                    const midiNotes = chordToMidiNotes(parsed);
+                    playChordAudio(midiNotes, 'piano', 1.4);
+                });
+
+                const controls = document.createElement('div');
+                controls.className = 'root-card-controls';
+                controls.appendChild(typeSelect);
+                controls.appendChild(bassSelect);
+
+                const actions = document.createElement('div');
+                actions.className = 'root-card-actions';
+                actions.appendChild(chip);
+
+                card.appendChild(header);
+                card.appendChild(controls);
+                card.appendChild(actions);
+                wrap.appendChild(card);
+                updateChip();
             });
         }
 
@@ -1604,7 +1897,8 @@
                 box.innerHTML = `
                     <div class="flex items-center justify-between mb-2">
                         <input class="seg-name text-base font-semibold bg-transparent focus:outline-none px-1 rounded hover:bg-white focus:bg-white" value="${seg.name}" />
-                        <div class="flex items-center gap-2">
+                    <div class="flex items-center gap-2">
+                            <button class="seg-preview text-xs bg-emerald-500 hover:bg-emerald-600 text-white px-2 py-1 rounded">Preview</button>
                             <button class="seg-dup text-xs bg-sky-600 hover:bg-sky-700 text-white px-2 py-1 rounded">Duplicate</button>
                             <button class="seg-del text-xs bg-rose-600 hover:bg-rose-700 text-white px-2 py-1 rounded">Delete</button>
                         </div>
@@ -1621,6 +1915,13 @@
                 const trackInner = box.querySelector('.seg-track-inner');
                 const ruler = box.querySelector('.seg-ruler');
                 const drop = box.querySelector('.seg-drop');
+                const previewBtn = box.querySelector('.seg-preview');
+                if (previewBtn){
+                    previewBtn.addEventListener('click',(ev)=>{
+                        ev.stopPropagation();
+                        previewSegment(seg.id);
+                    });
+                }
                 drop.innerHTML = '';
                 ruler.innerHTML = '';
                 const dropWrapper = document.createElement('div');
@@ -2047,6 +2348,25 @@
         }
 
         // --- Playback ---
+        function previewSegment(segId, when = null){
+            const seg = state.segments.find(s=>s.id===segId);
+            if(!seg || !seg.chords.length) return;
+            stopAll();
+            const bpm = parseFloat($('#seg-bpm').value)||100;
+            const num = parseInt($('#seg-time-num').value)||4;
+            const den = parseInt($('#seg-time-den').value)||4;
+            const spb = state.engine.secondsPerBeat(bpm, den);
+            const barDuration = spb * num;
+            let offset = 0;
+            seg.chords.forEach(ch=>{
+                const parsed = parseChord(ch.name);
+                const midiNotes = chordToMidiNotes(parsed);
+                const duration = Math.max(0.1, barDuration * (ch.bars || 1));
+                const startTime = when !== null ? when + offset : (window.Tone && typeof Tone.now === 'function' ? Tone.now() + offset : null);
+                playChordAudio(midiNotes, 'piano', duration, startTime);
+                offset += duration;
+            });
+        }
         function clearPlayIndicators(){ $$('#seg-list .seg-chord').forEach(c=>c.classList.remove('playing')); }
 
         function playAll(){
@@ -2096,6 +2416,43 @@
                 }
             }
             state.engine.running = true;
+        }
+
+        function playSegmentsTone(){
+            if (!state.segments.length) return;
+            stopAll();
+            const bpm = parseFloat($('#seg-bpm').value)||100;
+            const num = parseInt($('#seg-time-num').value)||4;
+            const den = parseInt($('#seg-time-den').value)||4;
+            const spb = state.engine.secondsPerBeat(bpm, den);
+            const barDuration = spb * num;
+            const withClick = $('#seg-metronome').checked;
+            const ctx = state.engine.ensure();
+            const tickStart = ctx.currentTime + 0.1;
+            const toneStart = window.Tone && typeof Tone.now === 'function' ? Tone.now() + 0.1 : null;
+            let toneTime = toneStart;
+            let elapsedBars = 0;
+            state.segments.forEach(seg => {
+                if (!seg.chords.length) return;
+                seg.chords.forEach(ch => {
+                    const parsed = parseChord(ch.name);
+                    const midiNotes = chordToMidiNotes(parsed);
+                    const chordBars = ch.bars || 1;
+                    const duration = Math.max(0.1, barDuration * chordBars);
+                    playChordAudio(midiNotes, 'piano', duration, toneTime);
+                    if (toneTime !== null) toneTime += duration;
+                    elapsedBars += chordBars;
+                });
+            });
+            if (withClick && elapsedBars > 0){
+                const totalBeats = elapsedBars * num;
+                let tickTime = tickStart;
+                for (let b = 0; b < totalBeats; b++){
+                    const accent = (b % num) === 0;
+                    state.engine.scheduleTick(tickTime, accent);
+                    tickTime += spb;
+                }
+            }
         }
 
         function stopAll(){
@@ -2170,7 +2527,7 @@
                 addSegment(name);
             });
             $('#seg-clear').addEventListener('click', ()=>{ state.segments=[]; state.selectedGroup=null; state.groupEdit=null; renderSegments(); stopAll(); });
-            $('#seg-play').addEventListener('click', playAll);
+            $('#seg-preview').addEventListener('click', playSegmentsTone);
             $('#seg-stop').addEventListener('click', stopAll);
             $('#seg-add-custom').addEventListener('click', ()=>{
                 const v = ($('#seg-custom-chord').value||'').trim();
